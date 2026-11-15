@@ -1,0 +1,8 @@
+.venv
+lake
+raw
+artifacts
+reports
+.git
+**/__pycache__
+**/.pytest_cache

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recsys Demo</title>
+<style>
+:root{
+  --bg:#f6f5f2;--panel:#ffffff;--ink:#1d1c1a;--muted:#6b6862;--line:#e4e1da;--accent:#0f6e5c;--accent-ink:#fff;
+  --chip:#eef3f1;--warn:#b5481f;--new:#7a4bd1;--shadow:0 1px 2px rgba(0,0,0,.06),0 4px 14px rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#141413;--panel:#1d1d1b;--ink:#ecebe7;--muted:#a19e97;--line:#2f2e2b;--accent:#4fc2a8;--accent-ink:#0b1f1a;
+  --chip:#1f2a27;--warn:#f08c64;--new:#b79bf2;--shadow:none}}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,-apple-system,"PingFang SC","Noto Sans SC",sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0 8px 0 0;letter-spacing:.2px}
+label.ctl{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:12px}
+select,button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+button{cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button:hover{filter:brightness(.97)}
+main{display:grid;grid-template-columns:280px 1fr 300px;gap:16px;padding:16px;max-width:1500px;margin:0 auto}
+@media (max-width:1100px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
+.panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 10px}
+.panel+.panel{margin-top:16px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:13px}
+.kv span:nth-child(odd){color:var(--muted)}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:3px 0 8px}
+.bar>i{display:block;height:100%;background:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;transition:transform .12s}
+.card:hover{transform:translateY(-2px)}
+.img{height:110px;display:grid;place-items:center;font-size:44px;position:relative}
+.badge{position:absolute;top:8px;left:8px;font-size:10px;font-weight:600;padding:2px 6px;border-radius:6px;background:var(--new);color:#fff}
+.rank{position:absolute;top:8px;right:8px;font-size:11px;color:var(--muted);background:var(--panel);border-radius:6px;padding:1px 6px}
+.body{padding:10px;display:flex;flex-direction:column;gap:4px;flex:1}
+.brand{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.title{font-size:13px;font-weight:500;line-height:1.3}
+.price{font-weight:600;margin-top:auto}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:10px;padding:1px 6px;border-radius:999px;background:var(--chip);color:var(--muted)}
+.tabs{display:flex;gap:6px;margin-bottom:12px;align-items:center;flex-wrap:wrap}
+.tabs .spacer{flex:1}
+.muted{color:var(--muted)}
+.mini{display:flex;gap:8px;align-items:center;font-size:12px;padding:4px 0;border-bottom:1px dashed var(--line)}
+.mini b{font-size:18px}
+.funnel div{display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px dashed var(--line)}
+.funnel .neg{color:var(--warn)}
+dialog{border:none;border-radius:14px;padding:0;max-width:880px;width:calc(100% - 32px);background:var(--bg);color:var(--ink)}
+dialog::backdrop{background:rgba(0,0,0,.4)}
+.detail{display:grid;grid-template-columns:200px 1fr;gap:16px;padding:16px;background:var(--panel);border-bottom:1px solid var(--line)}
+.detail .img{height:180px;border-radius:12px;font-size:72px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.section{padding:16px}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.on{opacity:.92}
+code{font-size:11px}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="t-title">Recommendation Engine · Demo</h1>
+  <label class="ctl"><span id="t-market">Market</span><select id="market"></select></label>
+  <label class="ctl"><span id="t-user">Shopper</span><select id="user"></select></label>
+  <label class="ctl"><span id="t-lang">Language</span><select id="lang"><option value="en">English</option><option value="zh">中文</option></select></label>
+  <label class="ctl"><span id="t-variant">A/B variant</span><select id="variant"><option value="">auto (hash)</option></select></label>
+</header>
+<main>
+  <aside>
+    <div class="panel" id="profile"></div>
+    <div class="panel"><h2 id="t-recent">Recent activity</h2><div id="recent" class="muted">—</div></div>
+  </aside>
+  <section>
+    <div class="tabs">
+      <button class="primary" id="refresh">↻ <span id="t-refresh">Refresh feed</span></button>
+      <span class="muted" id="feed-note"></span>
+      <span class="spacer"></span>
+    </div>
+    <div class="grid" id="feed"></div>
+    <div id="cart-wrap" style="display:none;margin-top:24px">
+      <h3 id="t-bundle" style="margin:0 0 10px">Complete your cart</h3>
+      <div class="grid" id="bundle"></div>
+    </div>
+  </section>
+  <aside>
+    <div class="panel"><h2 id="t-pipeline">Pipeline trace</h2><div class="funnel" id="trace"></div></div>
+    <div class="panel"><h2 id="t-model">Model</h2><div id="model" class="kv"></div></div>
+  </aside>
+</main>
+<dialog id="dlg"><div id="dlg-body"></div></dialog>
+<div class="toast" id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+const APP = "demo";
+const HUES = {skincare:160,makeup:340,fragrance:290,liquor:30,wine:350,watches:210,jewelry:50,handbags:20,confectionery:15,health:45,electronics:230,eyewear:190};
+const SRC_LABEL = {hot:"hot",interest:"interest",retarget:"retarget",swing:"swing i2i",embedding:"vector",new_items:"new",parent_swing:"swing i2i",parent_embedding:"vector",parent_brand:"same brand",parent_category:"same category",bought_together:"bought together",fallback_hot:"fallback"};
+const I18N = {
+ en:{title:"Recommendation Engine · Demo",market:"Market",user:"Shopper",lang:"Language",variant:"A/B variant",recent:"Recent activity",refresh:"Refresh feed",bundle:"Complete your cart",pipeline:"Pipeline trace",model:"Model",related:"You may also like",cart:"Add to cart",buy:"Buy",dislike:"Not interested",close:"Close",country:"Country",level:"Member level",interests:"Interests",brands:"Brands",allowance:"Duty-free allowance left",none:"No history yet — cold start",guest:"Guest (new user)",clicked:"Click recorded — profile updated in real time",carted:"Added to cart",bought:"Purchased",disliked:"Brand down-weighted",feedNote:"Refresh = new request; items already shown in the last 30 min are deduplicated.",recall:"Recall",merged:"Merged candidates",returned:"Returned",latency:"Latency",exp:"Experiment",ranker:"Ranker"},
+ zh:{title:"推荐引擎 · 演示",market:"市场",user:"用户",lang:"语言",variant:"实验分组",recent:"最近行为",refresh:"刷新推荐",bundle:"凑单推荐",pipeline:"链路追踪",model:"模型",related:"相关推荐",cart:"加入购物车",buy:"购买",dislike:"不感兴趣",close:"关闭",country:"国家/地区",level:"会员等级",interests:"兴趣类目",brands:"偏好品牌",allowance:"剩余免税额度",none:"暂无行为 — 冷启动",guest:"访客（新用户）",clicked:"已记录点击 — 画像实时更新",carted:"已加入购物车",bought:"已购买",disliked:"已对该品牌降权",feedNote:"刷新即发起新请求；30 分钟内已下发的商品会被去重。",recall:"召回",merged:"合并候选",returned:"返回",latency:"耗时",exp:"实验",ranker:"排序模型"}
+};
+let META=null, LANG="en", CART=[], NOW=Date.now()/1000;
+const t = k => (I18N[LANG]||I18N.en)[k]||k;
+const fmt = (p,c) => p==null ? "—" : new Intl.NumberFormat(LANG==="zh"?"zh-CN":"en-NZ",{style:"currency",currency:c||"USD",maximumFractionDigits:0}).format(p);
+function toast(msg){const el=$("#toast");el.textContent=msg;el.classList.add("on");clearTimeout(el._t);el._t=setTimeout(()=>el.classList.remove("on"),1800)}
+async function api(path, body){
+  const r = await fetch(path, body ? {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)} : {});
+  if(!r.ok) throw new Error(await r.text()); return r.json();
+}
+const market = () => $("#market").value, uid = () => $("#user").value;
+
+function applyI18n(){
+  for (const k of ["title","market","user","lang","variant","recent","refresh","bundle","pipeline","model"]) { const el=$("#t-"+k); if(el) el.textContent=t(k); }
+  document.documentElement.lang = LANG; $("#feed-note").textContent = t("feedNote");
+}
+function card(it, onClick){
+  const el=document.createElement("div"); el.className="card";
+  const hue=HUES[it.category]??200, fresh=(NOW - it.publish_ts) < 14*86400;
+  el.innerHTML = `<div class="img" style="background:linear-gradient(135deg,hsl(${hue} 55% 88%),hsl(${hue+25} 45% 75%))">${it.image||"🛍️"}
+      ${fresh?'<span class="badge">NEW</span>':""}<span class="rank">#${it.rank} · ${it.score.toFixed(3)}</span></div>
+    <div class="body"><div class="brand">${it.brand} · ${it.category_label}</div><div class="title">${it.title}</div>
+    <div class="chips">${(it.sources||[]).map(s=>`<span class="chip">${SRC_LABEL[s]||s}</span>`).join("")}</div>
+    <div class="price">${fmt(it.price,it.currency)}</div></div>`;
+  el.onclick = () => onClick(it); return el;
+}
+async function write(event_type, it){
+  await api(`/data/api/${APP}/behavior/write`, [{user_id:uid(), item_id:it.id, event_type, paid_amount: event_type==="purchase"?it.price:0}]);
+}
+async function loadProfile(){
+  const p = await api(`/demo/profile/${encodeURIComponent(uid())}?market=${market()}&lang=${LANG}`);
+  const cur = META.markets[market()].currency;
+  let html = `<h2>${uid()}</h2><div class="kv"><span>${t("country")}</span><span>${p.country||"—"}</span><span>${t("level")}</span><span>${["Classic","Gold","Platinum","Black"][p.member_level]||p.member_level}</span></div>`;
+  if (p.allowance_remaining!=null){ const pct=100*p.allowance_remaining/p.allowance;
+    html += `<div style="margin-top:10px" class="muted">${t("allowance")}: <b style="color:var(--ink)">${fmt(p.allowance_remaining,cur)}</b></div><div class="bar"><i style="width:${pct}%"></i></div>`; }
+  if (!p.categories.length) html += `<p class="muted">${t("none")}</p>`;
+  else {
+    html += `<div style="margin-top:10px" class="muted">${t("interests")}</div>` + p.categories.map(c=>`<div style="font-size:12px">${c.label} <span class="muted">${(c.weight*100).toFixed(0)}%</span></div><div class="bar"><i style="width:${c.weight*100}%"></i></div>`).join("");
+    html += `<div class="muted">${t("brands")}</div><div class="chips" style="margin-top:4px">${p.brands.map(b=>`<span class="chip">${b.name}</span>`).join("")}</div>`;
+  }
+  $("#profile").innerHTML = html;
+  CART = p.cart.map(x=>x.id);
+  $("#recent").innerHTML = p.recent.length ? p.recent.map(r=>`<div class="mini"><b>${r.image}</b><span>${r.title}</span></div>`).join("") : "—";
+}
+function showTrace(tr){
+  const rows = [];
+  rows.push(`<div><span>${t("exp")}</span><b>${Object.entries(tr.experiments).map(([k,v])=>v).join(", ")||"—"}</b></div>`);
+  rows.push(`<div><span>${t("ranker")}</span><b>${tr.ranker}</b></div>`);
+  for (const [k,v] of Object.entries(tr.recall)) rows.push(`<div><span>${t("recall")} · ${SRC_LABEL[k]||k}</span><span>${v}</span></div>`);
+  rows.push(`<div><span>${t("merged")}</span><b>${tr.merged}</b></div>`);
+  for (const f of tr.filters) rows.push(`<div><span>${f.name}</span><span class="${f.removed?"neg":""}">−${f.removed} → ${f.left}</span></div>`);
+  rows.push(`<div><span>${t("returned")}</span><b>${tr.returned}</b></div>`);
+  rows.push(`<div><span>${t("latency")}</span><span>${tr.total_ms} ms <span class="muted">(${Object.entries(tr.timings_ms).map(([k,v])=>k+" "+v).join(" · ")})</span></span></div>`);
+  $("#trace").innerHTML = rows.join("");
+}
+async function loadFeed(){
+  const r = await api("/demo/recommend",{user_id:uid(), scene:"home_feed", market:market(), lang:LANG, variant:$("#variant").value||null});
+  NOW=r.now; const g=$("#feed"); g.innerHTML=""; r.items.forEach(it=>g.appendChild(card(it, openItem))); showTrace(r.trace);
+  if (CART.length){
+    const b = await api("/demo/recommend",{user_id:uid(), scene:"cart", market:market(), lang:LANG, cart_item_ids:CART});
+    $("#cart-wrap").style.display=""; const bg=$("#bundle"); bg.innerHTML=""; b.items.forEach(it=>bg.appendChild(card(it, openItem)));
+  } else $("#cart-wrap").style.display="none";
+}
+async function openItem(it){
+  await write("click", it); toast(t("clicked"));
+  const r = await api("/demo/recommend",{user_id:uid(), scene:"item_related", market:market(), lang:LANG, parent_item_id:it.id});
+  NOW=r.now; const hue=HUES[it.category]??200;
+  $("#dlg-body").innerHTML = `<div class="detail"><div class="img" style="background:linear-gradient(135deg,hsl(${hue} 55% 88%),hsl(${hue+25} 45% 75%))">${it.image}</div>
+    <div><div class="brand">${it.brand} · ${it.category_label}</div><h2 style="margin:4px 0">${it.title}</h2><div style="font-size:20px;font-weight:600">${fmt(it.price,it.currency)}</div>
+    <div class="muted" style="margin-top:6px;font-size:12px"><code>${it.id}</code></div>
+    <div class="actions"><button class="primary" id="a-cart">${t("cart")}</button><button id="a-buy">${t("buy")}</button><button id="a-dis">${t("dislike")}</button><span style="flex:1"></span><button id="a-close">${t("close")}</button></div></div></div>
+    <div class="section"><h3 style="margin:0 0 10px">${t("related")}</h3><div class="grid" id="related"></div></div>`;
+  r.items.forEach(x=>$("#related").appendChild(card(x, async y=>{ $("#dlg").close(); openItem(y); })));
+  showTrace(r.trace);
+  $("#a-close").onclick = () => $("#dlg").close();
+  $("#a-cart").onclick = async () => { await write("add_cart", it); toast(t("carted")); $("#dlg").close(); await loadProfile(); await loadFeed(); };
+  $("#a-buy").onclick = async () => { await write("purchase", it); toast(t("bought")); $("#dlg").close(); await loadProfile(); await loadFeed(); };
+  $("#a-dis").onclick = async () => { await write("dislike", it); toast(t("disliked")); $("#dlg").close(); await loadProfile(); await loadFeed(); };
+  $("#dlg").showModal(); loadProfile();
+}
+async function loadUsers(){
+  const us = await api(`/demo/users?market=${market()}`);
+  $("#user").innerHTML = us.map(u=>`<option value="${u.user_id}">${u.events? `${u.user_id} · ${u.country} · ${u.events} ev` : t("guest")}</option>`).join("");
+}
+async function reload(){ await loadProfile(); await loadFeed(); }
+async function init(){
+  META = await api("/demo/meta");
+  $("#market").innerHTML = Object.entries(META.markets).map(([k,m])=>`<option value="${k}">${(m.name&&m.name.en)||k} (${m.currency})</option>`).join("");
+  for (const vs of Object.values(META.experiments)) for (const v of vs) $("#variant").insertAdjacentHTML("beforeend",`<option value="${v}">${v}</option>`);
+  const m = META.ranker||{}; $("#model").innerHTML = `<span>backend</span><span>${m.backend||"—"}</span><span>AUC</span><span>${(m.auc||0).toFixed(4)}</span><span>GAUC</span><span>${(m.gauc||0).toFixed(4)}</span><span>samples</span><span>${(m.train_rows||0).toLocaleString()}</span>`;
+  $("#market").onchange = async()=>{ await loadUsers(); await reload(); };
+  $("#user").onchange = reload; $("#variant").onchange = loadFeed; $("#refresh").onclick = loadFeed;
+  $("#lang").onchange = async()=>{ LANG=$("#lang").value; applyI18n(); const cur=uid(); await loadUsers(); $("#user").value=cur; await reload(); };
+  applyI18n(); await loadUsers(); await reload();
+}
+init().catch(e=>{document.body.insertAdjacentHTML("afterbegin",`<pre style="color:red;padding:16px">${e}</pre>`)});
+</script>
+</body>
+</html>

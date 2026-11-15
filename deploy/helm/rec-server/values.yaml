@@ -1,0 +1,26 @@
+image:
+  repository: registry.example.com/recsys/rec-server
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+replicas: 2
+# one uvicorn worker per container; scale with replicas/HPA (≈300–400 QPS per pod measured on 1 core)
+resources:
+  requests: {cpu: "1", memory: 2Gi}
+  limits: {cpu: "2", memory: 4Gi}
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 30
+  targetCPUUtilizationPercentage: 60
+
+# engine.pkl produced by the training pipeline
+artifacts:
+  existingClaim: recsys-artifacts
+
+# configs/engine.toml content (rendered into a ConfigMap)
+engineConfig: ""
+
+service:
+  port: 80

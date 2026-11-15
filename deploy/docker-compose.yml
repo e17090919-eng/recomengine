@@ -1,0 +1,104 @@
+# Local development infrastructure (mirrors the production components at small scale).
+#   docker compose -f deploy/docker-compose.yml up -d     (or: make infra-up)
+# Host ports: redis 6379 · postgres 5432 · kafka 9092 · clickhouse 8123/9000 · minio 9100/9101
+#             prometheus 9090 · grafana 3000 (admin/admin)
+name: recsys
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+    ports: ["6379:6379"]
+    volumes: [redis:/data]
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 5s, retries: 10}
+
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: recsys, POSTGRES_PASSWORD: recsys, POSTGRES_DB: recsys}
+    ports: ["5432:5432"]
+    volumes:
+      - pg:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U recsys"], interval: 5s, retries: 10}
+
+  kafka:
+    image: apache/kafka:3.8.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:9093,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports: ["9092:9092"]
+    volumes: [kafka:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:19092 >/dev/null 2>&1"]
+      interval: 10s
+      retries: 12
+
+  kafka-init:   # one-shot: create topics
+    image: apache/kafka:3.8.0
+    depends_on: {kafka: {condition: service_healthy}}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for t in behavior-events:12 item-changes:3 user-changes:3; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists \
+            --topic $${t%%:*} --partitions $${t##*:} --replication-factor 1
+        done
+    restart: "no"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment: {CLICKHOUSE_USER: recsys, CLICKHOUSE_PASSWORD: recsys, CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"}
+    ports: ["8123:8123", "9000:9000"]
+    ulimits: {nofile: {soft: 262144, hard: 262144}}
+    volumes:
+      - ch:/var/lib/clickhouse
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    depends_on: {kafka-init: {condition: service_completed_successfully}}
+    healthcheck: {test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"], interval: 5s, retries: 20}
+
+  minio:   # S3-compatible object storage for the lake, models and indexes
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    command: ["server", "/data", "--address", ":9100", "--console-address", ":9101"]
+    environment: {MINIO_ROOT_USER: recsys, MINIO_ROOT_PASSWORD: recsys-secret}
+    ports: ["9100:9100", "9101:9101"]
+    volumes: [minio:/data]
+    healthcheck: {test: ["CMD", "mc", "ready", "local"], interval: 5s, retries: 10}
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-10-08T09-37-26Z
+    depends_on: {minio: {condition: service_healthy}}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9100 recsys recsys-secret &&
+        mc mb --ignore-existing local/recsys-lake local/recsys-models
+    restart: "no"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    ports: ["9090:9090"]
+    volumes: [./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment: {GF_SECURITY_ADMIN_USER: admin, GF_SECURITY_ADMIN_PASSWORD: admin}
+    ports: ["3000:3000"]
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on: [prometheus]
+
+volumes: {redis: {}, pg: {}, kafka: {}, ch: {}, minio: {}}

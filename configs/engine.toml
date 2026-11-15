@@ -1,0 +1,85 @@
+# Engine configuration. Everything market- or customer-specific lives here,
+# not in code: markets (currency / language / allowance / purchase limits),
+# slots (SPM -> recall + rank + rules), and A/B experiments.
+
+[app]
+app_id = "demo"
+default_market = "CN-HAINAN"
+
+[auth]
+enabled = false          # set true + token to require Tenant-Signature on /predict
+tenant_id = "demo"
+token = "change-me"
+
+# ---------------------------------------------------------------- markets
+[markets.CN-HAINAN]
+name = { en = "Hainan Offshore Duty Free", zh = "海南离岛免税" }
+currency = "CNY"
+timezone = "Asia/Shanghai"
+languages = ["zh", "en"]
+channels = ["island_pickup", "home_delivery"]
+allowance = 100000.0                       # yearly duty-free allowance (local currency); 0 = none
+category_limits = { liquor = 6, electronics = 4 }   # max units per category per 7 days
+
+[markets.NZ-AKL]
+name = { en = "Auckland Airport Duty Free", zh = "奥克兰机场免税" }
+currency = "NZD"
+timezone = "Pacific/Auckland"
+languages = ["en", "zh"]
+channels = ["departure_pickup", "arrival_pickup"]
+allowance = 0.0
+category_limits = { liquor = 3, wine = 6 }
+
+# ---------------------------------------------------------------- slots
+# A slot is bound to an SPM prefix "app$##$page$##$block" (4th segment = position).
+[slots.home_feed]
+spm = "demo$##$home$##$feed"
+size = 20
+ranker = "gbdt"            # gbdt | recall_score
+recalls = [
+  { name = "hot",       quota = 100, weight = 0.5 },
+  { name = "interest",  quota = 150, weight = 1.0 },
+  { name = "retarget",  quota = 20,  weight = 1.2 },
+  { name = "swing",     quota = 200, weight = 1.0 },
+  { name = "embedding", quota = 150, weight = 0.8 },
+  { name = "new_items", quota = 30,  weight = 0.4 },
+]
+filters = ["item_pool", "request_filter", "purchased", "allowance", "category_limit", "issued_dedup"]
+boost_new = { days = 7, weight = 0.15 }
+dispersion = [ { field = "brand", window = 4, max = 2 }, { field = "category", window = 6, max = 3 } ]
+
+[slots.item_related]
+spm = "demo$##$item$##$related"
+size = 12
+ranker = "gbdt"
+recalls = [
+  { name = "parent_swing",     quota = 150, weight = 1.2 },
+  { name = "parent_embedding", quota = 100, weight = 1.0 },
+  { name = "parent_brand",     quota = 40,  weight = 0.6 },
+  { name = "parent_category",  quota = 80,  weight = 0.5 },
+]
+filters = ["item_pool", "request_filter", "exclude_parent", "purchased", "allowance"]
+dispersion = [ { field = "brand", window = 3, max = 1 } ]
+
+[slots.cart]
+spm = "demo$##$cart$##$bundle"
+size = 12
+ranker = "gbdt"
+recalls = [
+  { name = "bought_together", quota = 150, weight = 1.2 },
+  { name = "interest",        quota = 80,  weight = 0.8 },
+  { name = "hot",             quota = 50,  weight = 0.4 },
+]
+filters = ["item_pool", "request_filter", "in_cart", "purchased", "allowance", "category_limit"]
+dispersion = [ { field = "category", window = 4, max = 2 } ]
+
+# ---------------------------------------------------------------- A/B
+# Layers are orthogonal; variants inside a layer are mutually exclusive.
+# `params` override slot config for users bucketed into the variant.
+[experiments.rank_layer]
+slots = ["home_feed"]
+salt = "rank-2026-11"
+variants = [
+  { name = "control",   traffic = 50, params = { ranker = "recall_score" } },
+  { name = "treatment", traffic = 50, params = { ranker = "gbdt" } },
+]

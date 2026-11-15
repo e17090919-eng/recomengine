@@ -1,0 +1,68 @@
+# Field mapping for the sample vendor-style export produced by `recsys simulate --raw raw/`:
+#   events/*.jsonl  analytics-SDK events, Beijing local time, vendor event names
+#   members.csv / products.csv / store_prices.csv / categories.csv   CRM / ERP extracts
+# Copy this file per customer (e.g. configs/mappings/cdf_hainan.toml) and adjust field names.
+
+[meta]
+customer = "sample"
+description = "Sample analytics-SDK + ERP export"
+
+[tables.category]
+path = "categories.csv"
+format = "csv"
+[tables.category.columns]
+category = "cat_code"
+label_zh = "cat_name_cn"
+label_en = "cat_name_en"
+image = "icon"
+
+[tables.item]
+path = "products.csv"
+format = "csv"
+[tables.item.columns]
+item_id = "sku_code"
+title_zh = "name_cn"
+title_en = "name_en"
+category = "cat_code"
+brand = "brand_name"
+price_usd = "ref_price_usd"
+publish_ts = { field = "online_time", time_format = "iso" }
+image = "pic"
+
+[tables.item_market]
+path = "store_prices.csv"
+format = "csv"
+[tables.item_market.columns]
+item_id = "sku_code"
+market = { field = "site", map = { HN = "CN-HAINAN", AKL = "NZ-AKL" }, drop_unmapped = true }
+price = "sale_price"
+currency = { field = "currency", upper = true }
+stock = "stock_qty"
+channels = { field = "delivery", replace = { "," = "|" } }
+
+[tables.user]
+path = "members.csv"
+format = "csv"
+[tables.user.columns]
+user_id = "member_no"
+market = { field = "site", map = { HN = "CN-HAINAN", AKL = "NZ-AKL" } }
+country = "nationality"
+language = "lang"
+member_level = { field = "grade", map = { "普卡" = 0, "金卡" = 1, "铂金卡" = 2, "黑卡" = 3 }, default = 0 }
+register_ts = { field = "reg_date", time_format = "%Y-%m-%d", tz = "Asia/Shanghai" }
+allowance_used = { field = "used_quota", default = 0 }
+
+[tables.behavior]
+path = "events/*.jsonl"
+format = "jsonl"
+dedupe = true
+[tables.behavior.columns]
+user_id = "distinct_id"
+item_id = "properties.product_id"
+event_type = { field = "event", map = { ProductExposure = "impression", ProductClick = "click", AddWishlist = "favorite", AddToCart = "add_cart", PayOrderSuccess = "purchase" }, drop_unmapped = true }
+ts = { field = "time", time_format = "%Y-%m-%d %H:%M:%S", tz = "Asia/Shanghai" }
+spm = { template = "demo$##${properties.page_type}$##${properties.module}$##${properties.position}" }
+market = { field = "properties.site", map = { HN = "CN-HAINAN", AKL = "NZ-AKL" } }
+request_id = { field = "properties.rec_request_id", default = "0" }
+parent_item_id = "properties.parent_product_id"
+paid_amount = { field = "properties.order_amount", default = 0 }
