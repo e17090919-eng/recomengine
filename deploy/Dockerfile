@@ -6,6 +6,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY packages ./packages
 COPY tools ./tools
+COPY apps ./apps
 RUN uv sync --all-packages --frozen --no-dev
 
 FROM python:3.12-slim
