@@ -75,6 +75,13 @@ recalls = [
 filters = ["item_pool", "request_filter", "in_cart", "purchased", "allowance", "category_limit"]
 dispersion = [ { field = "category", window = 4, max = 2 } ]
 
+[slots.reorder]            # "time to restock" on the orders page: consumables that are due again
+spm = "demo$##$orders$##$reorder"
+size = 8
+ranker = "recall_score"
+recalls = [ { name = "repurchase", quota = 50, weight = 1.0, params = { early = 0.7, late = 2.5 } } ]
+filters = ["item_pool", "request_filter", "purchased", "allowance", "category_limit"]
+
 # ---------------------------------------------------------------- serving / state / ingest
 [serving]
 timeout_ms = 150           # whole-request budget; GBDT is skipped past 70% of it
@@ -88,7 +95,7 @@ url = "${RECSYS_REDIS_URL:-redis://localhost:6379/0}"
 
 [ingest]
 bus = "lake"               # lake (single node) | kafka | none
-lake_dir = "lake"
+lake_dir = "${RECSYS_INGEST_LAKE:-lake}"   # make demo writes to lake_demo/, not the training lake
 kafka_bootstrap = "localhost:9092"
 flush_rows = 5000
 flush_seconds = 10

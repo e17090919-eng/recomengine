@@ -12,3 +12,4 @@ __pycache__/
 /reports/*.json
 !/reports/.gitkeep
 .DS_Store
+/lake_demo/

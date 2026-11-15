@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Isle Select Demo</title>
+<style>
+:root{
+  --bg:#f7f5f1;--panel:#fff;--ink:#1c1b19;--muted:#6d6a63;--line:#e6e2da;--accent:#b4532a;--accent-ink:#fff;
+  --soft:#f3ece4;--ok:#2f7d5b;--warn:#b5481f;--info:#2d5f9a;--chip:#efeae2;--shadow:0 1px 2px rgba(0,0,0,.05),0 6px 18px rgba(0,0,0,.05);
+  --card-l1:90%;--card-l2:82%;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#141312;--panel:#1d1c1a;--ink:#edeae4;--muted:#a39f97;--line:#302e2a;--accent:#e9875a;--accent-ink:#1b0f08;
+  --soft:#27221d;--ok:#62c295;--warn:#f08c64;--info:#7fb0ea;--chip:#29261f;--shadow:none;--card-l1:26%;--card-l2:20%}}
+:root[data-theme="dark"]{
+  --bg:#141312;--panel:#1d1c1a;--ink:#edeae4;--muted:#a39f97;--line:#302e2a;--accent:#e9875a;--accent-ink:#1b0f08;
+  --soft:#27221d;--ok:#62c295;--warn:#f08c64;--info:#7fb0ea;--chip:#29261f;--shadow:none;--card-l1:26%;--card-l2:20%}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"PingFang SC","Noto Sans SC",sans-serif}
+a{color:inherit;text-decoration:none}
+button,select{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 12px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+button.ghost{background:transparent}
+button:disabled{opacity:.5;cursor:default}
+header{position:sticky;top:0;z-index:20;background:var(--panel);border-bottom:1px solid var(--line)}
+.bar{max-width:1280px;margin:0 auto;padding:10px 16px;display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap}
+.logo{font-weight:800;font-size:18px;letter-spacing:.3px;margin-right:6px;white-space:nowrap}
+.logo small{font-weight:500;color:var(--muted);font-size:11px;margin-left:6px}
+.grow{flex:1}
+nav.links{display:flex;gap:4px}
+nav.links a{padding:6px 10px;border-radius:999px;color:var(--muted)}
+nav.links a.on{background:var(--soft);color:var(--ink)}
+.cartbtn{position:relative}
+.cartbtn b{position:absolute;top:-6px;right:-6px;background:var(--accent);color:var(--accent-ink);font-size:11px;border-radius:999px;padding:0 6px;min-width:18px;text-align:center}
+.demo{background:var(--soft);border-bottom:1px solid var(--line);font-size:12px}
+.demo .bar{padding:6px 16px}
+.demo label{display:flex;gap:6px;align-items:center;color:var(--muted)}
+.demo select,.demo button{padding:3px 10px;font-size:12px}
+.hint{color:var(--muted)}
+.switch{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none}
+.switch i{width:30px;height:18px;border-radius:9px;background:var(--line);position:relative;transition:.15s}
+.switch i:after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--panel);transition:.15s}
+.switch.on i{background:var(--accent)}
+.switch.on i:after{left:14px}
+.layout{max-width:1280px;margin:0 auto;padding:16px;display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.layout.explain{grid-template-columns:minmax(0,1fr) 300px}
+.layout>*{min-width:0}
+@media (max-width:980px){.layout.explain{grid-template-columns:minmax(0,1fr)}}
+.hero{border-radius:16px;padding:22px 22px;background:linear-gradient(120deg,var(--soft),var(--panel));border:1px solid var(--line);display:flex;flex-wrap:wrap;gap:8px 24px;align-items:end}
+.hero h1{margin:0;font-size:22px}
+.hero p{margin:4px 0 0;color:var(--muted)}
+.cats{display:flex;gap:8px;overflow-x:auto;padding:4px 0 2px;margin:14px 0 6px;scrollbar-width:thin}
+.cats a{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:13px}
+.cats a.on{border-color:var(--accent);color:var(--accent)}
+h2.sec{font-size:17px;margin:22px 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+h2.sec small{font-weight:400;color:var(--muted);font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px}
+@media (max-width:520px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.hero{padding:16px}.hero h1{font-size:19px}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow);cursor:pointer;transition:transform .12s;position:relative}
+.card:hover{transform:translateY(-2px)}
+.card.dim{opacity:.45}
+.pic{aspect-ratio:4/3;display:grid;place-items:center;font-size:48px;position:relative}
+.pic .tag{position:absolute;left:8px;bottom:8px;font-size:10px;letter-spacing:.6px;text-transform:uppercase;font-weight:700;opacity:.7}
+.pic .rk{position:absolute;top:8px;left:8px;font-size:11px;background:var(--panel);border-radius:6px;padding:0 6px;color:var(--muted)}
+.card .b{padding:9px 10px 10px;display:flex;flex-direction:column;gap:3px;flex:1}
+.card .t{font-size:13px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card .p{font-weight:700;margin-top:auto}
+.card .add{position:absolute;right:8px;top:8px;border-radius:999px;padding:2px 9px;font-size:12px}
+.why{display:none;flex-wrap:wrap;gap:3px;margin-top:2px}
+.explain .why{display:flex}
+.chip{font-size:10px;padding:1px 7px;border-radius:999px;background:var(--chip);color:var(--muted);white-space:nowrap}
+.chip.src{background:color-mix(in srgb,var(--info) 14%,transparent);color:var(--info)}
+.chip.hit{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+.chip.bad{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+.strip{display:none;font-size:12px;color:var(--muted);gap:6px;flex-wrap:wrap;align-items:center;margin:-2px 0 10px}
+.explain .strip{display:flex}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:var(--shadow)}
+aside .panel+.panel{margin-top:12px}
+aside h3{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 8px}
+aside{display:none}
+.explain aside{display:block}
+.wbar{display:grid;grid-template-columns:72px 1fr 34px;gap:6px;align-items:center;font-size:12px;margin:3px 0}
+.wbar i{display:block;height:6px;border-radius:3px;background:var(--accent)}
+.wbar em{font-style:normal;color:var(--muted);text-align:right}
+.emo{display:flex;flex-wrap:wrap;gap:4px;font-size:20px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12px}
+.kv span:nth-child(odd){color:var(--muted)}
+.detail{display:grid;grid-template-columns:minmax(220px,360px) 1fr;gap:20px}
+@media (max-width:700px){.detail{grid-template-columns:1fr}}
+.detail .pic{border-radius:16px;font-size:96px}
+.detail h1{font-size:22px;margin:4px 0}
+.price{font-size:24px;font-weight:800;margin:10px 0}
+.lines .ln{display:grid;grid-template-columns:56px 1fr auto;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.lines .ln .pic{width:56px;border-radius:10px;font-size:26px}
+.qty{display:inline-flex;align-items:center;gap:6px}
+.qty button{padding:0 9px}
+.meter{height:10px;border-radius:5px;background:var(--line);overflow:hidden;display:flex;margin:8px 0}
+.meter i{display:block;height:100%}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.legend b{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:760px){.cols{grid-template-columns:1fr}}
+.cols .grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
+.score{font-size:28px;font-weight:800}
+.order{padding:12px 0;border-bottom:1px solid var(--line)}
+.order .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pill{font-size:11px;padding:1px 8px;border-radius:999px;background:var(--soft);color:var(--muted)}
+.pill.new{background:var(--accent);color:var(--accent-ink)}
+.empty{padding:28px;text-align:center;color:var(--muted)}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 16px;border-radius:999px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:50}
+.toast.on{opacity:.94}
+.skel{height:220px;border-radius:14px;background:linear-gradient(90deg,var(--soft),var(--panel),var(--soft));background-size:200% 100%;animation:sk 1.2s infinite}
+@keyframes sk{to{background-position:-200% 0}}
+footer{max-width:1280px;margin:20px auto 30px;padding:0 16px;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <a class="logo" href="#/">Isle Select<small data-t="tagline"></small></a>
+    <nav class="links">
+      <a href="#/" data-nav="home" data-t="home"></a>
+      <a href="#/orders" data-nav="orders" data-t="orders"></a>
+      <a href="#/compare" data-nav="compare" data-t="compare"></a>
+    </nav>
+    <span class="grow"></span>
+    <select id="market" aria-label="market"></select>
+    <button id="lang" class="ghost" aria-label="language"></button>
+    <a href="#/cart" class="cartbtn"><button>🛒 <span data-t="cart"></span></button><b id="cartn" hidden>0</b></a>
+  </div>
+  <div class="demo">
+    <div class="bar">
+      <label><span data-t="shopper"></span> <select id="persona"></select></label>
+      <span class="hint" id="phint"></span>
+      <span class="grow"></span>
+      <span class="switch" id="explainSw"><i></i><span data-t="explain"></span></span>
+      <label id="expWrap" hidden><span data-t="group"></span> <select id="exp"></select></label>
+      <button id="reset" data-t="reset"></button>
+    </div>
+  </div>
+</header>
+
+<div class="layout" id="layout">
+  <main id="view"></main>
+  <aside id="side">
+    <div class="panel"><h3 data-t="profile"></h3><div id="prof" class="hint">—</div></div>
+    <div class="panel"><h3 data-t="lastcall"></h3><div id="lastcall" class="kv"></div></div>
+  </aside>
+</div>
+<footer data-t="footer"></footer>
+<div class="toast" id="toast"></div>
+
+<script>
+const T = {
+  zh: {
+    tagline: "免税优选 · 演示", home: "首页", orders: "我的订单", compare: "效果对比", cart: "购物车", shopper: "演示用户",
+    explain: "讲解模式", group: "实验组", reset: "重置演示", profile: "引擎眼中的 TA", lastcall: "最近一次推荐调用",
+    footer: "演示商城：所有推荐来自自研推荐引擎（通过公开接口 + Python SDK 调用）；商品、品牌、用户均为模拟数据。",
+    forYou: "为你推荐", forYouSub: "首页「猜你喜欢」", refresh: "换一批", related: "看了又看", relatedSub: "商品详情页推荐",
+    bundle: "搭配购", bundleSub: "购物车推荐，会考虑剩余免税额度", reorder: "该补货了", reorderSub: "按你的购买周期，这些快用完了",
+    addCart: "加入购物车", added: "已加入购物车", stock: "库存", checkout: "去结算", empty: "购物车是空的", total: "合计",
+    ordered: "下单成功", allowance: "年度免税额度", used: "已用", inCart: "本单", left: "剩余", noAllowance: "此市场无免税额度限制",
+    noOrders: "还没有订单", justNow: "刚刚", daysAgo: d => `${d} 天前`, hoursAgo: h => `${h} 小时前`, items: n => `${n} 件`,
+    incumbent: "现有做法：热销榜", engine: "推荐引擎：为 TA 推荐", sameForAll: "所有人看到的都一样",
+    perUser: "按 TA 的兴趣、市场、额度实时生成", match: "与 TA 兴趣相符", overlap: "两边重合",
+    compareHint: "同一个用户，左边是热销榜（近似“现有逻辑”），右边是推荐引擎。绿色标签 = 属于 TA 最常逛的类目。",
+    topCats: "偏好类目", topBrands: "偏好品牌", recent: "最近行为", allowLeft: "免税额度剩余", member: "会员等级",
+    resetDone: "已重置：实时行为、购物车、订单都清空了", auto: "自动分流", fallback: "引擎不可用，SDK 用了兜底列表",
+    degraded: "降级", none: "无", latency: "耗时", slot: "推荐位", rid: "请求 ID", variant: "实验", items_: "条数",
+    browse: "逛逛", trendy: "按热度排序（非个性化）", guest: "访客", market: "市场", newBadge: "新",
+    learning: "引擎正在学习 TA 的兴趣…点几个商品试试", engineDown: "连不上推荐引擎",
+  },
+  en: {
+    tagline: "duty free · demo", home: "Home", orders: "Orders", compare: "Compare", cart: "Cart", shopper: "Shopper",
+    explain: "Explain", group: "Variant", reset: "Reset demo", profile: "What the engine knows", lastcall: "Last recommendation call",
+    footer: "Demo shop: every recommendation comes from our own engine (public API + Python SDK). Products, brands and shoppers are simulated.",
+    forYou: "Picked for you", forYouSub: "home feed", refresh: "Refresh", related: "You may also like", relatedSub: "product page",
+    bundle: "Goes well with", bundleSub: "cart add-ons, within your remaining allowance", reorder: "Time to restock", reorderSub: "Based on how often you buy these",
+    addCart: "Add to cart", added: "Added to cart", stock: "Stock", checkout: "Checkout", empty: "Your cart is empty", total: "Total",
+    ordered: "Order placed", allowance: "Yearly duty-free allowance", used: "Used", inCart: "This order", left: "Left", noAllowance: "No duty-free allowance in this market",
+    noOrders: "No orders yet", justNow: "just now", daysAgo: d => `${d} days ago`, hoursAgo: h => `${h} h ago`, items: n => `${n} items`,
+    incumbent: "Today: best sellers", engine: "Engine: picked for this shopper", sameForAll: "Same for everyone",
+    perUser: "Built from interests, market and allowance in real time", match: "Match the shopper's interests", overlap: "Overlap",
+    compareHint: "Same shopper. Left: best-seller list (approximates the current logic). Right: the engine. Green = one of the shopper's top categories.",
+    topCats: "Top categories", topBrands: "Top brands", recent: "Recent activity", allowLeft: "Allowance left", member: "Member level",
+    resetDone: "Reset: live behavior, carts and orders cleared", auto: "auto", fallback: "Engine unavailable: SDK served the fallback list",
+    degraded: "Degraded", none: "none", latency: "Latency", slot: "Slot", rid: "Request id", variant: "Variant", items_: "Items",
+    browse: "Browse", trendy: "by popularity (not personalised)", guest: "Guest", market: "Market", newBadge: "new",
+    learning: "The engine is still learning — click a few products", engineDown: "Cannot reach the engine",
+  },
+};
+const SRC = {
+  hot: ["热门", "Trending"], interest: ["兴趣", "Interests"], retarget: ["最近看过", "Recently viewed"],
+  swing: ["相似用户也喜欢", "Others also liked"], embedding: ["口味相近", "Similar taste"], new_items: ["新品", "New"],
+  repurchase: ["复购周期", "Restock cycle"], parent_swing: ["看了又看", "Viewed together"], parent_embedding: ["相似商品", "Similar"],
+  parent_brand: ["同品牌", "Same brand"], parent_category: ["同类目", "Same category"], bought_together: ["常一起买", "Bought together"],
+};
+
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("shop." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("shop." + k, JSON.stringify(v)); } catch {} },
+};
+const S = { boot: null, uid: store.get("uid", "visitor-001"), market: store.get("market", "CN-HAINAN"),
+  lang: store.get("lang", "zh"), explain: store.get("explain", false), exp: store.get("exp", ""), topCats: [] };
+const t = (k, ...a) => { const v = T[S.lang][k]; return typeof v === "function" ? v(...a) : (v ?? k); };
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const q = o => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== "")).toString();
+const base = () => ({ uid: S.uid, market: S.market, lang: S.lang });
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+}
+function toast(msg) { const el = $("#toast"); el.textContent = msg; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 2200); }
+function money(v, cur) {
+  if (v === null || v === undefined) return "—";
+  try { return new Intl.NumberFormat(S.lang === "zh" ? "zh-CN" : "en-NZ", { style: "currency", currency: cur || "USD", maximumFractionDigits: 0 }).format(v); }
+  catch { return `${cur} ${Math.round(v)}`; }
+}
+function hue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
+function pic(it, extra = "") {
+  const h = hue(it.brand || it.id);
+  return `<div class="pic" style="background:linear-gradient(135deg,hsl(${h} 42% var(--card-l1)),hsl(${(h + 40) % 360} 38% var(--card-l2)))">${extra}${esc(it.emoji)}<span class="tag">${esc(it.brand)}</span></div>`;
+}
+function why(it) {
+  const chips = (it.sources || []).map(s => `<span class="chip src">${esc((SRC[s] || [s, s])[S.lang === "zh" ? 0 : 1])}</span>`);
+  if (it.score !== null && it.score !== undefined) chips.push(`<span class="chip">${(+it.score).toFixed(3)}</span>`);
+  return `<div class="why">${chips.join("")}</div>`;
+}
+function card(it, ctx = {}) {
+  const href = `#/i/${encodeURIComponent(it.id)}?` + q({ rid: ctx.rid, spm: it.spm });
+  const cat = S.topCats.includes(it.category) && ctx.mark ? `<span class="chip hit">${esc(it.category_label)}</span>` : esc(it.category_label);
+  const add = ctx.add ? `<button class="add primary" data-add="${esc(it.id)}" data-rid="${esc(ctx.rid || "")}" data-spm="${esc(it.spm || "")}">+</button>` : "";
+  const rk = it.rank && S.explain ? `<span class="rk">#${it.rank}</span>` : "";
+  return `<a class="card" href="${href}">${pic(it, rk)}${add}<div class="b">
+    <div class="t">${esc(it.title)}</div><div class="hint" style="font-size:11px">${cat}</div>
+    <div class="p">${money(it.price, it.currency)}</div>${ctx.why === false ? "" : why(it)}</div></a>`;
+}
+function strip(r) {
+  if (!r) return "";
+  const exp = Object.entries(r.experiments || {}).map(([k, v]) => `${k}=${v}`).join(", ");
+  const bits = [`<span class="chip">${esc(r.slot)}</span>`, `<span class="chip">${r.ms} ms</span>`];
+  if (exp) bits.push(`<span class="chip">${esc(exp)}</span>`);
+  if (r.fallback) bits.push(`<span class="chip bad">${t("fallback")}</span>`);
+  (r.degraded || []).forEach(d => bits.push(`<span class="chip bad">${t("degraded")}: ${esc(d)}</span>`));
+  return `<div class="strip">${bits.join("")}</div>`;
+}
+function recSection(r, title, sub, ctx = {}) {
+  lastCall(r);
+  if (!r.items.length) return ctx.hideEmpty ? "" : `<h2 class="sec">${title}<small>${sub}</small></h2><div class="empty">${r.fallback ? t("engineDown") : "—"}</div>`;
+  impressions(r);
+  return `<h2 class="sec">${title}<small>${sub}</small>${ctx.action || ""}</h2>${strip(r)}
+    <div class="grid">${r.items.map(it => card(it, { rid: r.request_id, add: ctx.add, mark: true })).join("")}</div>`;
+}
+function impressions(r) {
+  if (!r.request_id || !r.items.length) return;
+  api("/api/impressions", { method: "POST", body: JSON.stringify({ uid: S.uid, market: S.market, request_id: r.request_id,
+    items: r.items.map(i => ({ id: i.id, spm: i.spm })) }) }).catch(() => {});
+}
+function lastCall(r) {
+  const exp = Object.entries(r.experiments || {}).map(([k, v]) => `${k}=${v}`).join(", ") || "—";
+  $("#lastcall").innerHTML = [
+    [t("slot"), r.slot], [t("rid"), (r.request_id || "—").slice(0, 18)], [t("latency"), `${r.ms} ms`],
+    [t("variant"), exp], [t("items_"), r.items.length],
+    [t("degraded"), r.fallback ? t("fallback") : (r.degraded || []).join(", ") || t("none")],
+  ].map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("");
+}
+const skel = n => `<div class="grid">${Array.from({ length: n }, () => '<div class="skel"></div>').join("")}</div>`;
+
+// ------------------------------------------------------------ views
+async function viewHome() {
+  const m = S.boot.markets[S.market];
+  const cats = S.boot.categories.map(c => `<a href="#/c/${c.id}">${c.emoji} ${esc(c[S.lang])}</a>`).join("");
+  $("#view").innerHTML = `<div class="hero"><div><h1>${esc(m.name[S.lang])}</h1><p>${esc(personaLabel())}</p></div></div>
+    <div class="cats">${cats}</div><div id="feed">${skel(10)}</div>`;
+  await loadFeed();
+}
+async function loadFeed() {
+  const r = await api("/api/home?" + q({ ...base(), exp: S.exp }));
+  const btn = `<button class="ghost" id="more">↻ ${t("refresh")}</button>`;
+  $("#feed").innerHTML = recSection(r, t("forYou"), t("forYouSub"), { add: true, action: btn });
+  $("#more").onclick = () => { $("#feed").innerHTML = skel(10); loadFeed(); };
+  refreshSide();
+}
+async function viewCategory(cat) {
+  const c = S.boot.categories.find(x => x.id === cat);
+  const cats = S.boot.categories.map(x => `<a class="${x.id === cat ? "on" : ""}" href="#/c/${x.id}">${x.emoji} ${esc(x[S.lang])}</a>`).join("");
+  $("#view").innerHTML = `<div class="cats">${cats}</div><h2 class="sec">${c ? c.emoji + " " + esc(c[S.lang]) : ""}<small>${t("trendy")}</small></h2>${skel(12)}`;
+  const r = await api(`/api/category/${encodeURIComponent(cat)}?` + q(base()));
+  $("#view").querySelector(".grid").outerHTML = `<div class="grid">${r.items.map(it => card(it, { add: true, why: false })).join("")}</div>`;
+}
+async function viewItem(id, params) {
+  $("#view").innerHTML = skel(4);
+  const r = await api(`/api/item/${encodeURIComponent(id)}?` + q({ ...base(), rid: params.get("rid"), spm: params.get("spm") }));
+  const it = r.item;
+  $("#view").innerHTML = `<div class="detail">${pic(it)}<div>
+      <div class="hint">${esc(it.brand)} · ${esc(it.category_label)}</div><h1>${esc(it.title)}</h1>
+      <div class="price">${money(it.price, it.currency)}</div>
+      <div class="hint">${t("stock")}: ${it.stock}</div>
+      <p><button class="primary" data-add="${esc(it.id)}" data-rid="${esc(params.get("rid") || "")}" data-spm="${esc(params.get("spm") || "")}">${t("addCart")}</button></p>
+    </div></div>
+    ${recSection(r.related, t("related"), t("relatedSub"), { add: true })}`;
+  refreshSide();
+}
+async function viewCart() {
+  $("#view").innerHTML = skel(4);
+  const r = await api("/api/cart?" + q(base()));
+  const cur = S.boot.markets[S.market].currency;
+  const lines = r.lines.map(l => `<div class="ln">${pic(l)}<div><a href="#/i/${encodeURIComponent(l.id)}">${esc(l.title)}</a>
+      <div class="hint">${money(l.price, l.currency)}</div></div>
+      <div style="text-align:right"><span class="qty"><button data-q="${esc(l.id)}" data-d="-1">−</button>${l.qty}<button data-q="${esc(l.id)}" data-d="1">+</button></span>
+      <div><b>${money(l.line_total, l.currency)}</b></div></div></div>`).join("");
+  let allow = `<p class="hint">${t("noAllowance")}</p>`;
+  if (r.allowance) {
+    const a = r.allowance, pct = v => Math.min(100, 100 * v / a.cap);
+    const over = a.used + a.in_cart > a.cap;
+    allow = `<div><b>${t("allowance")}</b> <span class="hint">${money(a.cap, cur)}</span></div>
+      <div class="meter"><i style="width:${pct(a.used)}%;background:var(--muted)"></i><i style="width:${pct(a.in_cart)}%;background:${over ? "var(--warn)" : "var(--accent)"}"></i></div>
+      <div class="legend"><span><b style="background:var(--muted)"></b>${t("used")} ${money(a.used, cur)}</span>
+        <span><b style="background:var(--accent)"></b>${t("inCart")} ${money(a.in_cart, cur)}</span>
+        <span><b style="background:var(--line)"></b>${t("left")} <strong style="color:var(--ink)">${money(a.left, cur)}</strong></span></div>`;
+  }
+  $("#view").innerHTML = `<div class="cols" style="grid-template-columns:1fr">
+    <div class="panel"><h2 class="sec" style="margin-top:0">🛒 ${t("cart")}</h2>
+      ${lines ? `<div class="lines">${lines}</div>` : `<div class="empty">${t("empty")}</div>`}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:12px;flex-wrap:wrap">
+        <div>${t("total")}: <b style="font-size:18px">${money(r.total, cur)}</b></div>
+        <button class="primary" id="checkout" ${lines ? "" : "disabled"}>${t("checkout")}</button></div>
+      <div style="margin-top:14px">${allow}</div></div></div>
+    ${recSection(r.bundle, t("bundle"), t("bundleSub"), { add: true })}`;
+  document.querySelectorAll("[data-q]").forEach(b => b.onclick = async () => { await cartChange(b.dataset.q, +b.dataset.d); viewCart(); });
+  $("#checkout").onclick = async () => {
+    const o = await api("/api/checkout", { method: "POST", body: JSON.stringify({ uid: S.uid, market: S.market }) });
+    toast(`${t("ordered")} · ${money(o.total, cur)}`); updateCartCount(); location.hash = "#/orders";
+  };
+  refreshSide();
+}
+async function viewOrders() {
+  $("#view").innerHTML = skel(4);
+  const r = await api("/api/orders?" + q(base()));
+  const ago = ts => { const s = r.now - ts; return s < 3600 ? t("justNow") : s < 86400 ? t("hoursAgo", Math.round(s / 3600)) : t("daysAgo", Math.round(s / 86400)); };
+  const orders = r.orders.map(o => `<div class="order"><div class="row"><b>${esc(o.id)}</b>
+      ${o.live ? `<span class="pill new">${t("justNow")}</span>` : `<span class="pill">${ago(o.ts)}</span>`}
+      <span class="pill">${esc(o.market)}</span><span class="grow"></span><b>${money(o.total, o.currency)}</b></div>
+      <div class="emo" style="margin-top:6px">${o.lines.map(l => `<a title="${esc(l.title)}" href="#/i/${encodeURIComponent(l.id)}">${esc(l.emoji)}</a>`).join("")}
+      <span class="hint" style="font-size:12px;align-self:center">${esc(o.lines.map(l => l.title).slice(0, 2).join(" · "))}${o.lines.length > 2 ? " …" : ""}</span></div></div>`).join("");
+  $("#view").innerHTML = `${recSection(r.reorder, "🔁 " + t("reorder"), t("reorderSub"), { add: true, hideEmpty: true })}
+    <h2 class="sec">${t("orders")}</h2><div class="panel">${orders || `<div class="empty">${t("noOrders")}</div>`}</div>`;
+  refreshSide();
+}
+async function viewCompare() {
+  $("#view").innerHTML = skel(6);
+  await refreshSide();
+  const r = await api("/api/compare?" + q({ ...base(), exp: S.exp }));
+  const e = r.engine;
+  lastCall(e); impressions(e);
+  const engIds = new Set(e.items.map(i => i.id));
+  const m = list => list.filter(i => S.topCats.includes(i.category)).length;
+  const overlap = r.incumbent.filter(i => engIds.has(i.id)).length;
+  const col = (title, sub, items, n, ctx) => `<div class="panel"><h2 class="sec" style="margin-top:0">${title}</h2>
+      <p class="hint" style="margin:-6px 0 10px">${sub}</p>
+      <div style="display:flex;gap:16px;align-items:baseline;margin-bottom:10px"><span class="score">${n}/${items.length}</span><span class="hint">${t("match")}</span></div>
+      ${ctx.strip || ""}<div class="grid">${items.map(it => card(it, ctx)).join("")}</div></div>`;
+  $("#view").innerHTML = `<p class="hint">${t("compareHint")} ${t("overlap")}: ${overlap}</p><div class="cols">
+    ${col(t("incumbent"), t("sameForAll"), r.incumbent, m(r.incumbent), { mark: true, why: false })}
+    ${col(t("engine"), t("perUser"), e.items, m(e.items), { mark: true, rid: e.request_id, strip: strip(e) })}</div>`;
+}
+
+// ------------------------------------------------------------ side panel (explain)
+async function refreshSide() {
+  try {
+    const p = await api("/api/profile?" + q(base()));
+    S.topCats = (p.categories || []).slice(0, 3).map(c => c.name);
+    if (!S.explain) return;
+    const max = Math.max(1e-9, ...(p.categories || []).map(c => c.weight));
+    const bmax = Math.max(1e-9, ...(p.brands || []).map(c => c.weight));
+    const bars = (xs, mx, lab) => xs.map(c => `<div class="wbar"><span>${esc(lab(c))}</span><i style="width:${(100 * c.weight / mx).toFixed(0)}%"></i><em>${(c.weight / mx * 100).toFixed(0)}</em></div>`).join("");
+    const cur = S.boot.markets[S.market].currency;
+    $("#prof").innerHTML = `<div class="kv" style="margin-bottom:8px"><span>${t("market")}</span><span>${esc(p.market)}</span>
+        <span>${t("member")}</span><span>${p.member_level ?? 0}</span>
+        ${p.allowance ? `<span>${t("allowLeft")}</span><span>${money(p.allowance_remaining, cur)}</span>` : ""}</div>
+      <h3>${t("topCats")}</h3>${(p.categories || []).length ? bars(p.categories, max, c => c.label) : `<div class="hint">${t("learning")}</div>`}
+      ${(p.brands || []).length ? `<h3 style="margin-top:10px">${t("topBrands")}</h3>${bars(p.brands.slice(0, 3), bmax, c => c.name)}` : ""}
+      ${(p.recent || []).length ? `<h3 style="margin-top:10px">${t("recent")}</h3><div class="emo">${p.recent.map(i => `<span title="${esc(i.title)}">${esc(i.image)}</span>`).join("")}</div>` : ""}`;
+  } catch { $("#prof").textContent = t("engineDown"); }
+}
+
+// ------------------------------------------------------------ cart
+async function cartChange(id, d, rid, spm) {
+  const r = await api("/api/cart", { method: "POST", body: JSON.stringify({ uid: S.uid, market: S.market, item_id: id, qty: d, rid: rid || null, spm: spm || null }) });
+  setCartCount(r.count); return r;
+}
+function setCartCount(n) { const b = $("#cartn"); b.textContent = n; b.hidden = !n; }
+async function updateCartCount() { try { setCartCount((await api("/api/meta?" + q({ uid: S.uid }))).cart_count); } catch {} }
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-add]");
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  await cartChange(b.dataset.add, 1, b.dataset.rid, b.dataset.spm);
+  toast(t("added"));
+  if (location.hash.startsWith("#/cart")) viewCart(); else refreshSide();
+});
+
+// ------------------------------------------------------------ chrome
+function personaLabel() {
+  const p = S.boot.personas.find(x => x.id === S.uid);
+  return p ? p.hint[S.lang] : S.uid;
+}
+function renderChrome() {
+  document.documentElement.lang = S.lang;
+  document.querySelectorAll("[data-t]").forEach(el => el.textContent = t(el.dataset.t));
+  $("#lang").textContent = S.lang === "zh" ? "EN" : "中文";
+  $("#market").innerHTML = Object.entries(S.boot.markets).map(([k, m]) => `<option value="${k}" ${k === S.market ? "selected" : ""}>${esc(m.name[S.lang])}</option>`).join("");
+  $("#persona").innerHTML = S.boot.personas.map(p => `<option value="${esc(p.id)}" ${p.id === S.uid ? "selected" : ""}>${esc(p.label[S.lang])} · ${esc(p.id)}</option>`).join("");
+  $("#phint").textContent = personaLabel();
+  $("#explainSw").classList.toggle("on", S.explain);
+  $("#layout").classList.toggle("explain", S.explain);
+  const variants = Object.values(S.boot.experiments || {})[0] || [];
+  $("#expWrap").hidden = !S.explain || !variants.length;
+  $("#exp").innerHTML = [["", t("auto")], ...variants.map(v => [v, v])].map(([v, l]) => `<option value="${v}" ${v === S.exp ? "selected" : ""}>${esc(l)}</option>`).join("");
+  const route = (location.hash.split("?")[0].split("/")[1] || "");
+  document.querySelectorAll("[data-nav]").forEach(a => a.classList.toggle("on", a.dataset.nav === (route || "home")));
+}
+function save() { ["uid", "market", "lang", "explain", "exp"].forEach(k => store.set(k, S[k])); }
+async function route() {
+  renderChrome();
+  const [path, qs] = location.hash.slice(1).split("?");
+  const parts = (path || "/").split("/").filter(Boolean);
+  const params = new URLSearchParams(qs || "");
+  window.scrollTo(0, 0);
+  try {
+    if (!parts.length) await viewHome();
+    else if (parts[0] === "c") await viewCategory(parts[1]);
+    else if (parts[0] === "i") await viewItem(decodeURIComponent(parts[1]), params);
+    else if (parts[0] === "cart") await viewCart();
+    else if (parts[0] === "orders") await viewOrders();
+    else if (parts[0] === "compare") await viewCompare();
+    else await viewHome();
+  } catch (err) { $("#view").innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
+}
+$("#market").onchange = e => { S.market = e.target.value; S.lang = S.boot.markets[S.market].lang; save(); updateCartCount(); route(); };
+$("#lang").onclick = () => { S.lang = S.lang === "zh" ? "en" : "zh"; save(); route(); };
+$("#persona").onchange = e => {
+  S.uid = e.target.value; const p = S.boot.personas.find(x => x.id === S.uid);
+  if (p) { S.market = p.market; S.lang = S.boot.markets[p.market].lang; }
+  save(); updateCartCount(); location.hash = "#/"; route();
+};
+$("#explainSw").onclick = () => { S.explain = !S.explain; save(); route(); };
+$("#exp").onchange = e => { S.exp = e.target.value; save(); route(); };
+$("#reset").onclick = async () => {
+  try { await api("/api/reset", { method: "POST" }); toast(t("resetDone")); setCartCount(0); location.hash = "#/"; route(); }
+  catch (err) { toast(err.message); }
+};
+window.addEventListener("hashchange", route);
+
+(async () => {
+  S.boot = await api("/api/bootstrap");
+  if (!S.boot.markets[S.market]) S.market = Object.keys(S.boot.markets)[0];
+  updateCartCount();
+  route();
+  // the "time to restock" shopper is found by probing the engine in the background
+  if (!S.boot.personas.some(p => p.id !== "visitor-001" && p.label.en === "Time to restock")) {
+    setTimeout(async () => { try { S.boot.personas = (await api("/api/bootstrap")).personas; renderChrome(); } catch {} }, 8000);
+  }
+})();
+</script>
+</body>
+</html>

@@ -64,6 +64,15 @@ report:  ## T+1 daily report for DATE=YYYYMMDD on the lake
 loadtest:  ## load test a running server (make serve-multi in another shell)
 	$(UV) run recsys loadtest --concurrency 32,64,128 --rate 2000,3000 --duration 20
 
+demo:  ## demo shop on :8100 driven by the engine on :8000 (Ctrl-C stops both); see docs/demo-script.md
+	@test -f lake/item.parquet || $(MAKE) p0
+	@test -f artifacts/engine.pkl || $(MAKE) train
+	@rm -f artifacts/demo-config.db artifacts/demo-config.db-*
+	@RECSYS_DEMO=1 RECSYS_INGEST_LAKE=lake_demo RECSYS_CONFIG_STORE=sqlite:///artifacts/demo-config.db \
+	  $(UV) run recsys serve & ENGINE=$$!; trap 'kill $$ENGINE 2>/dev/null' EXIT INT TERM; \
+	  echo "shop: http://127.0.0.1:8100   engine console: http://127.0.0.1:8000/admin"; \
+	  $(UV) run demo-shop --engine http://127.0.0.1:8000 --lake lake
+
 p1: p0 train ab-sim  ## P0 + train (ONNX export) + online A/B simulation
 
 infra-up:  ## start local infra (docker compose)
@@ -75,4 +84,4 @@ infra-down:  ## stop local infra
 infra-check:  ## verify local infra endpoints respond
 	./deploy/check-infra.sh
 
-.PHONY: help setup lint fmt typecheck test check docs raw backfill quality baseline p0 train serve serve-multi ab-sim report loadtest p1 infra-up infra-down infra-check
+.PHONY: help setup lint fmt typecheck test check docs raw backfill quality baseline p0 train serve serve-multi ab-sim report loadtest demo p1 infra-up infra-down infra-check

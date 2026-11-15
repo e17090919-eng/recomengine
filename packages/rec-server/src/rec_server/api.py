@@ -430,6 +430,24 @@ def create_app(
             items.append(d)
         return {"request_id": rec.request_id, "now": eng.clock.now(), "items": items, "trace": rec.trace}
 
+    @app.post("/demo/reset")
+    def demo_reset() -> dict:
+        """Forget everything received since start (live behaviors, profile patches, issued
+        dedup) and restart the data clock, so every demo run starts from the same state.
+        Only with RECSYS_DEMO=1 and the in-process memory state; never in production."""
+        from .data import Clock
+        from .state import MemoryLive
+
+        if os.environ.get("RECSYS_DEMO") != "1":
+            raise HTTPException(403, "demo reset is disabled (set RECSYS_DEMO=1)")
+        if not isinstance(eng.users.live, MemoryLive):
+            raise HTTPException(409, "demo reset needs [state] backend = 'memory'")
+        eng.users.live = MemoryLive()
+        eng._item_ver = 0
+        eng.clock = Clock(eng.clock.base_ts, live=True)
+        eng.bus.flush()
+        return {"ok": True, "now": eng.clock.now()}
+
     return app
 
 
