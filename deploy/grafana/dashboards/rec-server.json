@@ -144,7 +144,7 @@
       "gridPos": {
         "x": 0,
         "y": 16,
-        "w": 24,
+        "w": 12,
         "h": 8
       },
       "fieldConfig": {
@@ -158,6 +158,34 @@
           "refId": "A",
           "expr": "sum by (table, status) (rate(ingest_events_total[1m]))",
           "legendFormat": "{{table}} {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Degraded requests by reason",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(rec_degraded_total[1m]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
         }
       ]
     }

@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recsys Console</title>
+<style>
+:root{
+  --bg:#f6f5f2;--panel:#ffffff;--ink:#1d1c1a;--muted:#6b6862;--line:#e4e1da;--accent:#0f6e5c;--accent-ink:#fff;
+  --chip:#eef3f1;--warn:#b5481f;--ok:#1d7a3e;--add:#e6f4ea;--del:#fbe9e4;--shadow:0 1px 2px rgba(0,0,0,.06),0 4px 14px rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#141413;--panel:#1d1d1b;--ink:#ecebe7;--muted:#a19e97;--line:#2f2e2b;--accent:#4fc2a8;--accent-ink:#0b1f1a;
+  --chip:#1f2a27;--warn:#f08c64;--ok:#6fcf8f;--add:#16301f;--del:#3a1d14;--shadow:none}}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 system-ui,-apple-system,"PingFang SC","Noto Sans SC",sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0 8px 0 0}
+.pill{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--chip);color:var(--muted)}
+.pill.err{background:var(--del);color:var(--warn)}
+label.ctl{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:12px}
+input,select,textarea,button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+input[type=number]{width:90px}
+textarea{width:100%;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+button{cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.ghost{border-color:transparent;color:var(--muted)}
+button:disabled{opacity:.5;cursor:default}
+main{display:grid;grid-template-columns:1fr 420px;gap:16px;padding:16px;max-width:1500px;margin:0 auto}
+@media (max-width:1100px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;box-shadow:var(--shadow);min-width:0}
+.panel+.panel{margin-top:16px}
+.panel h2{font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 10px}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px;border-bottom:1px solid var(--line)}
+.tabs button{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;padding:8px 12px;color:var(--muted)}
+.tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:8px 0}
+.row>label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+.tablewrap{overflow-x:auto}
+h3{font-size:13px;margin:18px 0 6px}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--chip);color:var(--ink);border:1px solid var(--line);cursor:pointer;user-select:none}
+.chip.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+.msg{font-size:13px;padding:8px 10px;border-radius:8px;margin:8px 0;white-space:pre-wrap;word-break:break-word}
+.msg.err{background:var(--del);color:var(--warn)}
+.msg.ok{background:var(--add);color:var(--ok)}
+.msg.warn{background:var(--chip);color:var(--muted)}
+.diff{font:12px/1.5 ui-monospace,Menlo,monospace;max-height:240px;overflow:auto}
+.diff div{padding:2px 4px;border-bottom:1px dashed var(--line);word-break:break-all}
+.diff .o{color:var(--warn)}.diff .n{color:var(--ok)}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px}
+.cmp ol{margin:4px 0;padding-left:20px}
+.cmp li.same{color:var(--muted)}
+.cmp li.newi{font-weight:600}
+.ver{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13px}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.on{opacity:.92}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="t-title">推荐引擎 · 配置后台</h1>
+  <span class="pill" id="ver">—</span>
+  <span class="pill" id="dirty" hidden></span>
+  <span style="flex:1"></span>
+  <label class="ctl"><span id="t-token">管理口令</span><input id="token" type="password" placeholder="X-Admin-Token" size="14"></label>
+  <label class="ctl"><select id="lang"><option value="zh">中文</option><option value="en">English</option></select></label>
+  <a class="small muted" href="/">Demo →</a>
+</header>
+<main>
+  <section class="panel">
+    <div class="tabs" id="tabs"></div>
+    <div id="pane"></div>
+  </section>
+  <aside>
+    <div class="panel">
+      <h2 id="t-check">校验与发布</h2>
+      <div class="row">
+        <button id="validate">✓ <span id="t-validate">校验</span></button>
+        <button id="reset" class="ghost">↺ <span id="t-reset2">放弃修改</span></button>
+      </div>
+      <div id="vout"></div>
+      <div class="row">
+        <input id="comment" placeholder="变更说明（必填）" style="flex:1">
+        <button class="primary" id="publish"><span id="t-publish">发布</span></button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2 id="t-preview">效果预览（当前 vs 草稿）</h2>
+      <div class="row">
+        <label><span id="t-user">用户 ID</span><input id="pv-user" size="12"></label>
+        <label><span id="t-scene">栏位</span><select id="pv-scene"></select></label>
+        <label><span id="t-market">市场</span><select id="pv-market"><option value="">auto</option></select></label>
+        <label><span id="t-parent">种子商品</span><input id="pv-parent" size="9"></label>
+        <button id="preview">▶</button>
+      </div>
+      <div id="pout"></div>
+    </div>
+    <div class="panel">
+      <h2 id="t-history">版本历史</h2>
+      <div id="hist" class="small muted">—</div>
+    </div>
+  </aside>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const clone = (x) => JSON.parse(JSON.stringify(x));
+const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+
+const I18N = {
+  zh: {title:"推荐引擎 · 配置后台", token:"管理口令", check:"校验与发布", validate:"校验", reset2:"放弃修改", publish:"发布",
+       preview:"效果预览（当前 vs 草稿）", user:"用户 ID", scene:"栏位", market:"市场", parent:"种子商品", history:"版本历史",
+       slots:"栏位", experiments:"A/B 实验", markets:"市场规则", serving:"降级与超时", toml:"TOML", running:"运行中版本",
+       unsaved:"未发布的修改", comment:"变更说明（必填）", size:"返回条数", ranker:"排序", recalls:"召回通道", filters:"过滤规则（按顺序执行）",
+       dispersion:"打散", boost:"新品加权", pool:"物品池", name:"名称", quota:"配额", weight:"权重", params:"参数（JSON）",
+       field:"字段", window:"窗口", max:"最多", days:"天数", add:"＋ 添加", incl_cat:"只推这些类目（空 = 全部）", excl_cat:"排除类目",
+       incl_brand:"只推这些品牌（空 = 全部）", excl_brand:"排除品牌", excl_items:"排除商品 ID（逗号或换行分隔）", min_price:"最低价", max_price:"最高价",
+       allowance:"免税额度（0 = 无）", limits:"类目限购（7 天件数，JSON）", blocked_cat:"合规禁推类目", blocked_items:"合规禁推商品 ID",
+       variants:"分组", traffic:"流量 %", layer_slots:"作用栏位", salt:"分桶盐值", toml_note:"直接编辑热更新部分的 TOML。在这里修改后，发布以 TOML 为准。",
+       restart:"以下配置需要改 configs/engine.toml 并重启，后台不可修改：", rollback:"回滚到此版本", active:"当前", ok_valid:"校验通过",
+       no_changes:"没有修改", need_comment:"请填写变更说明", published:"已发布版本", rolled:"已回滚到版本", overlap:"重合", only_draft:"粗体 = 草稿新增",
+       current:"当前配置", draft:"草稿", errors:"错误", warnings:"提醒", changes:"处修改", timeout:"整体超时 ms", recall_budget:"召回预算 ms",
+       rank_max:"精排候选上限", fallback:"兜底条数", enabled:"开启", del:"删除", audit:"操作记录"},
+  en: {title:"Recommendation Engine · Console", token:"Admin token", check:"Validate & publish", validate:"Validate", reset2:"Discard", publish:"Publish",
+       preview:"Preview (current vs draft)", user:"User ID", scene:"Slot", market:"Market", parent:"Seed item", history:"Versions",
+       slots:"Slots", experiments:"A/B experiments", markets:"Market rules", serving:"Degradation", toml:"TOML", running:"running version",
+       unsaved:"unpublished changes", comment:"Change note (required)", size:"Size", ranker:"Ranker", recalls:"Recall channels", filters:"Filters (in order)",
+       dispersion:"Dispersion", boost:"New-item boost", pool:"Item pool", name:"Name", quota:"Quota", weight:"Weight", params:"Params (JSON)",
+       field:"Field", window:"Window", max:"Max", days:"Days", add:"+ Add", incl_cat:"Only these categories (empty = all)", excl_cat:"Exclude categories",
+       incl_brand:"Only these brands (empty = all)", excl_brand:"Exclude brands", excl_items:"Exclude item IDs (comma / newline)", min_price:"Min price", max_price:"Max price",
+       allowance:"Duty-free allowance (0 = none)", limits:"Category limits (units / 7 days, JSON)", blocked_cat:"Compliance: blocked categories", blocked_items:"Compliance: blocked item IDs",
+       variants:"Variants", traffic:"Traffic %", layer_slots:"Slots", salt:"Bucket salt", toml_note:"Edit the hot-reloadable sections as TOML. If you edit here, the TOML is what gets published.",
+       restart:"These need configs/engine.toml + a restart and cannot be changed here:", rollback:"Roll back", active:"active", ok_valid:"Valid",
+       no_changes:"No changes", need_comment:"Please add a change note", published:"Published version", rolled:"Rolled back to version", overlap:"overlap", only_draft:"bold = new in draft",
+       current:"Current", draft:"Draft", errors:"Errors", warnings:"Warnings", changes:"change(s)", timeout:"Request timeout ms", recall_budget:"Recall budget ms",
+       rank_max:"Max ranked candidates", fallback:"Fallback size", enabled:"on", del:"Remove", audit:"Audit log"},
+};
+let L = I18N[store.get("console.lang") || "zh"] || I18N.zh;
+let S = {meta: null, base: null, draft: null, tab: "slots", slot: null, tomlDirty: false, toml: ""};
+
+function toast(t){const e=$("#toast");e.textContent=t;e.classList.add("on");clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove("on"),2200)}
+function headers(){const h={"Content-Type":"application/json"};const t=$("#token").value;if(t)h["X-Admin-Token"]=t;return h}
+async function api(path, body){
+  const r = await fetch(path, body === undefined ? {headers: headers()} : {method:"POST", headers: headers(), body: JSON.stringify(body)});
+  let j = {}; try { j = await r.json() } catch (e) {}
+  if (r.status === 401) { toast(j.detail || "401"); throw new Error("401") }
+  return {status: r.status, ...j};
+}
+function payload(extra){return Object.assign(S.tomlDirty ? {toml: $("#tomltext") ? $("#tomltext").value : S.toml} : {config: S.draft}, extra || {})}
+function markDirty(){
+  const dirty = S.tomlDirty || JSON.stringify(S.draft) !== JSON.stringify(S.base);
+  $("#dirty").hidden = !dirty; $("#dirty").textContent = "● " + L.unsaved;
+}
+
+// ------------------------------------------------------------------ i18n
+function applyLang(){
+  for (const [k, v] of Object.entries(L)) { const e = document.getElementById("t-" + k); if (e) e.textContent = v }
+  $("#comment").placeholder = L.comment; document.documentElement.lang = L === I18N.zh ? "zh" : "en";
+  renderTabs(); render();
+}
+
+// ------------------------------------------------------------------ load
+async function load(){
+  const j = await api("/admin/api/config");
+  S.meta = j; S.base = clone(j.config); S.draft = clone(j.config); S.toml = j.toml; S.tomlDirty = false;
+  S.slot = S.slot && S.draft.slots[S.slot] ? S.slot : Object.keys(S.draft.slots)[0];
+  const v = j.version;
+  $("#ver").textContent = v ? `${L.running} v${j.running_version} · ${v.created_by} · ${v.created_at}` : "—";
+  $("#ver").className = "pill" + (j.reload_error ? " err" : "");
+  if (j.reload_error) $("#ver").title = j.reload_error;
+  $("#pv-scene").innerHTML = Object.keys(S.draft.slots).map((s) => `<option>${esc(s)}</option>`).join("");
+  $("#pv-market").innerHTML = `<option value="">auto</option>` + j.catalog.markets.map((m) => `<option>${esc(m)}</option>`).join("");
+  markDirty(); render(); history();
+}
+
+// ------------------------------------------------------------------ tabs
+function renderTabs(){
+  const tabs = [["slots", L.slots], ["experiments", L.experiments], ["markets", L.markets], ["serving", L.serving], ["toml", L.toml]];
+  $("#tabs").innerHTML = tabs.map(([k, t]) => `<button data-tab="${k}" class="${S.tab === k ? "on" : ""}">${esc(t)}</button>`).join("");
+  $("#tabs").querySelectorAll("button").forEach((b) => b.onclick = () => { S.tab = b.dataset.tab; renderTabs(); render() });
+}
+function render(){
+  if (!S.draft) return;
+  ({slots: renderSlots, experiments: renderExperiments, markets: renderMarkets, serving: renderServing, toml: renderToml})[S.tab]();
+}
+
+// generic bound inputs: data-path="slots.home_feed.size" data-type="int|float|str|json|list"
+function get(path){return path.split(".").reduce((o, k) => (o == null ? o : o[k]), S.draft)}
+function set(path, v){const ks = path.split("."); const last = ks.pop(); const o = ks.reduce((o, k) => o[k], S.draft); o[last] = v; markDirty()}
+function bind(root){
+  root.querySelectorAll("[data-path]").forEach((el) => {
+    const t = el.dataset.type || "str";
+    el.onchange = () => {
+      let v = el.value;
+      try {
+        if (t === "int") v = v === "" ? null : parseInt(v, 10);
+        else if (t === "float") v = v === "" ? null : parseFloat(v);
+        else if (t === "json") v = v.trim() === "" ? {} : JSON.parse(v);
+        else if (t === "list") v = v.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+        else if (t === "bool") v = el.checked;
+        el.style.borderColor = "";
+      } catch (e) { el.style.borderColor = "var(--warn)"; toast("JSON: " + e.message); return }
+      set(el.dataset.path, v);
+    };
+  });
+  root.querySelectorAll("[data-chips]").forEach((box) => {
+    box.querySelectorAll(".chip").forEach((c) => c.onclick = () => {
+      const path = box.dataset.chips; const cur = new Set(get(path) || []);
+      cur.has(c.dataset.v) ? cur.delete(c.dataset.v) : cur.add(c.dataset.v);
+      set(path, [...cur]); c.classList.toggle("on");
+    });
+  });
+}
+const num = (path, type = "int", step = "") => `<input type="number" ${step ? `step="${step}"` : ""} data-path="${path}" data-type="${type}" value="${esc(get(path) ?? "")}">`;
+const chips = (path, options) => { const cur = new Set(get(path) || []); return `<div class="chips" data-chips="${path}">` + options.map((o) => `<span class="chip ${cur.has(o) ? "on" : ""}" data-v="${esc(o)}">${esc(o)}</span>`).join("") + `</div>` };
+
+// ------------------------------------------------------------------ slots
+function renderSlots(){
+  const names = Object.keys(S.draft.slots), s = S.slot, base = `slots.${s}`, slot = S.draft.slots[s];
+  const reg = S.meta.registry, cat = S.meta.catalog;
+  slot.pool = slot.pool || {};
+  let h = `<div class="row">${names.map((n) => `<button class="${n === s ? "primary" : ""}" data-slot="${esc(n)}">${esc(n)}</button>`).join("")}
+    <span class="muted small">spm: <code>${esc(slot.spm)}</code></span></div>
+    <div class="row"><label>${L.size}${num(base + ".size")}</label>
+      <label>${L.ranker}<select data-path="${base}.ranker">${reg.rankers.map((r) => `<option ${r === slot.ranker ? "selected" : ""}>${r}</option>`).join("")}</select></label></div>
+    <h3>${L.recalls}</h3><div class="tablewrap"><table><tr><th>${L.name}</th><th>${L.quota}</th><th>${L.weight}</th><th>${L.params}</th><th></th></tr>`;
+  slot.recalls.forEach((r, i) => {
+    const p = `${base}.recalls.${i}`, allowed = reg.recalls[r.name] || [];
+    h += `<tr><td><select data-path="${p}.name">${Object.keys(reg.recalls).map((n) => `<option ${n === r.name ? "selected" : ""}>${n}</option>`).join("")}</select></td>
+      <td>${num(p + ".quota")}</td><td>${num(p + ".weight", "float", "0.05")}</td>
+      <td><input data-path="${p}.params" data-type="json" value='${esc(JSON.stringify(r.params || {}))}' title="${esc(allowed.join(", "))}" placeholder="${esc(allowed.join(", ") || "—")}" size="18"></td>
+      <td><button class="ghost" data-del-recall="${i}">✕</button></td></tr>`;
+  });
+  h += `</table></div><button class="ghost" id="add-recall">${L.add}</button>
+    <h3>${L.filters}</h3><div class="chips">` + reg.filters.map((f) => { const k = slot.filters.indexOf(f); return `<span class="chip ${k >= 0 ? "on" : ""}" data-filter="${f}">${k >= 0 ? (k + 1) + ". " : ""}${f}</span>` }).join("") + `</div>
+    <h3>${L.dispersion}</h3><table><tr><th>${L.field}</th><th>${L.window}</th><th>${L.max}</th><th></th></tr>`;
+  slot.dispersion.forEach((d, i) => {
+    const p = `${base}.dispersion.${i}`;
+    h += `<tr><td><select data-path="${p}.field">${["brand", "category"].map((f) => `<option ${f === d.field ? "selected" : ""}>${f}</option>`).join("")}</select></td>
+      <td>${num(p + ".window")}</td><td>${num(p + ".max")}</td><td><button class="ghost" data-del-disp="${i}">✕</button></td></tr>`;
+  });
+  h += `</table><button class="ghost" id="add-disp">${L.add}</button>
+    <h3>${L.boost}</h3><div class="row"><label><span><input type="checkbox" id="boost-on" ${slot.boost_new ? "checked" : ""}> ${L.enabled}</span></label>
+      ${slot.boost_new ? `<label>${L.days}${num(base + ".boost_new.days", "float")}</label><label>${L.weight}${num(base + ".boost_new.weight", "float", "0.05")}</label>` : ""}</div>
+    <h3>${L.pool}</h3>
+    <div class="small muted">${L.incl_cat}</div>${chips(base + ".pool.include_categories", cat.categories)}
+    <div class="small muted" style="margin-top:8px">${L.excl_cat}</div>${chips(base + ".pool.exclude_categories", cat.categories)}
+    <div class="row"><label style="flex:1">${L.incl_brand}<input data-path="${base}.pool.include_brands" data-type="list" value="${esc((slot.pool.include_brands || []).join(", "))}"></label>
+      <label style="flex:1">${L.excl_brand}<input data-path="${base}.pool.exclude_brands" data-type="list" value="${esc((slot.pool.exclude_brands || []).join(", "))}"></label></div>
+    <div class="row"><label style="flex:1">${L.excl_items}<textarea rows="2" data-path="${base}.pool.exclude_items" data-type="list">${esc((slot.pool.exclude_items || []).join("\n"))}</textarea></label></div>
+    <div class="row"><label>${L.min_price}${num(base + ".pool.min_price", "float")}</label><label>${L.max_price}${num(base + ".pool.max_price", "float")}</label></div>`;
+  const pane = $("#pane"); pane.innerHTML = h; bind(pane);
+  pane.querySelectorAll("[data-slot]").forEach((b) => b.onclick = () => { S.slot = b.dataset.slot; render() });
+  pane.querySelectorAll("[data-del-recall]").forEach((b) => b.onclick = () => { slot.recalls.splice(+b.dataset.delRecall, 1); markDirty(); render() });
+  pane.querySelectorAll("[data-del-disp]").forEach((b) => b.onclick = () => { slot.dispersion.splice(+b.dataset.delDisp, 1); markDirty(); render() });
+  $("#add-recall").onclick = () => { slot.recalls.push({name: "hot", quota: 50, weight: 1.0, params: {}}); markDirty(); render() };
+  $("#add-disp").onclick = () => { slot.dispersion.push({field: "brand", window: 3, max: 1}); markDirty(); render() };
+  $("#boost-on").onchange = (e) => { slot.boost_new = e.target.checked ? {days: 7, weight: 0.15} : null; markDirty(); render() };
+  pane.querySelectorAll("[data-filter]").forEach((c) => c.onclick = () => {
+    const f = c.dataset.filter, k = slot.filters.indexOf(f);
+    k >= 0 ? slot.filters.splice(k, 1) : slot.filters.push(f); markDirty(); render();
+  });
+  // re-render the recall row when the channel changes (param hints)
+  pane.querySelectorAll('select[data-path$=".name"]').forEach((el) => el.addEventListener("change", () => setTimeout(render)));
+}
+
+// ------------------------------------------------------------------ experiments
+function renderExperiments(){
+  const ex = S.draft.experiments || {}; let h = "";
+  for (const [layer, e] of Object.entries(ex)) {
+    const base = `experiments.${layer}`, total = e.variants.reduce((a, v) => a + (v.traffic || 0), 0);
+    h += `<h3>${esc(layer)} <span class="pill ${total > 100 ? "err" : ""}">${total}%</span></h3>
+      <div class="row"><label>${L.salt}<input data-path="${base}.salt" value="${esc(e.salt)}"></label></div>
+      <div class="small muted">${L.layer_slots}</div>${chips(base + ".slots", Object.keys(S.draft.slots))}
+      <table><tr><th>${L.name}</th><th>${L.traffic}</th><th>${L.params}</th><th></th></tr>`;
+    e.variants.forEach((v, i) => {
+      const p = `${base}.variants.${i}`;
+      h += `<tr><td><input data-path="${p}.name" value="${esc(v.name)}" size="12"></td><td>${num(p + ".traffic")}</td>
+        <td><input data-path="${p}.params" data-type="json" value='${esc(JSON.stringify(v.params || {}))}' style="width:100%"></td>
+        <td><button class="ghost" data-del-var="${layer}|${i}">✕</button></td></tr>`;
+    });
+    h += `</table><button class="ghost" data-add-var="${esc(layer)}">${L.add}</button>`;
+  }
+  const pane = $("#pane"); pane.innerHTML = h || `<p class="muted">—</p>`; bind(pane);
+  pane.querySelectorAll("[data-del-var]").forEach((b) => b.onclick = () => { const [l, i] = b.dataset.delVar.split("|"); ex[l].variants.splice(+i, 1); markDirty(); render() });
+  pane.querySelectorAll("[data-add-var]").forEach((b) => b.onclick = () => { ex[b.dataset.addVar].variants.push({name: "v" + (ex[b.dataset.addVar].variants.length + 1), traffic: 0, params: {}}); markDirty(); render() });
+  pane.querySelectorAll('input[data-path$=".traffic"]').forEach((el) => el.addEventListener("change", () => setTimeout(render)));
+}
+
+// ------------------------------------------------------------------ markets
+function renderMarkets(){
+  let h = "";
+  for (const [m, c] of Object.entries(S.draft.markets)) {
+    const base = `markets.${m}`;
+    h += `<h3>${esc(m)} <span class="muted small">${esc(c.currency)} · ${esc(c.timezone)}</span></h3>
+      <div class="row"><label>${L.allowance}${num(base + ".allowance", "float")}</label>
+        <label style="flex:1">${L.limits}<input data-path="${base}.category_limits" data-type="json" value='${esc(JSON.stringify(c.category_limits || {}))}'></label></div>
+      <div class="small muted">${L.blocked_cat}</div>${chips(base + ".blocked_categories", S.meta.catalog.categories)}
+      <div class="row"><label style="flex:1">${L.blocked_items}<textarea rows="2" data-path="${base}.blocked_items" data-type="list">${esc((c.blocked_items || []).join("\n"))}</textarea></label></div>`;
+  }
+  const pane = $("#pane"); pane.innerHTML = h; bind(pane);
+}
+
+function renderServing(){
+  const b = "serving";
+  let h = `<div class="row"><label>${L.timeout}${num(b + ".timeout_ms", "float")}</label><label>${L.recall_budget}${num(b + ".recall_budget_ms", "float")}</label>
+    <label>${L.rank_max}${num(b + ".rank_max_candidates")}</label><label>${L.fallback}${num(b + ".fallback_size")}</label></div>
+    <h3>${L.restart}</h3><pre class="small muted" style="white-space:pre-wrap">${esc(JSON.stringify(S.meta.restart_sections, null, 2))}</pre>`;
+  const pane = $("#pane"); pane.innerHTML = h; bind(pane);
+}
+
+function renderToml(){
+  const pane = $("#pane");
+  pane.innerHTML = `<p class="small muted">${L.toml_note}</p><textarea id="tomltext" rows="34" spellcheck="false">${esc(S.toml)}</textarea>`;
+  $("#tomltext").oninput = () => { S.tomlDirty = true; S.toml = $("#tomltext").value; markDirty() };
+}
+
+// ------------------------------------------------------------------ validate / publish / preview / history
+function showResult(el, j){
+  let h = "";
+  if (j.errors && j.errors.length) h += `<div class="msg err"><b>${L.errors}</b>\n${j.errors.map(esc).join("\n")}</div>`;
+  if (j.ok) h += `<div class="msg ok">${L.ok_valid}${j.diff ? ` · ${j.diff.length} ${L.changes}` : ""}</div>`;
+  if (j.warnings && j.warnings.length) h += `<div class="msg warn"><b>${L.warnings}</b>\n${j.warnings.map(esc).join("\n")}</div>`;
+  if (j.diff && j.diff.length) h += `<div class="diff">` + j.diff.map((d) => `<div>${esc(d.path)}: <span class="o">${esc(JSON.stringify(d.old))}</span> → <span class="n">${esc(JSON.stringify(d.new))}</span></div>`).join("") + `</div>`;
+  el.innerHTML = h;
+}
+$("#validate").onclick = async () => showResult($("#vout"), await api("/admin/api/validate", payload()));
+$("#reset").onclick = () => { S.draft = clone(S.base); S.tomlDirty = false; S.toml = S.meta.toml; $("#vout").innerHTML = ""; markDirty(); render() };
+$("#publish").onclick = async () => {
+  const comment = $("#comment").value.trim();
+  if (!comment) { toast(L.need_comment); $("#comment").focus(); return }
+  const v = await api("/admin/api/validate", payload());
+  showResult($("#vout"), v);
+  if (!v.ok) return;
+  if (!v.diff.length && !S.tomlDirty) { toast(L.no_changes); return }
+  if (!confirm(`${L.publish}: ${v.diff.length} ${L.changes}\n\n` + v.diff.slice(0, 12).map((d) => `${d.path}: ${JSON.stringify(d.old)} → ${JSON.stringify(d.new)}`).join("\n"))) return;
+  const j = await api("/admin/api/publish", payload({comment, author: "console"}));
+  if (!j.ok) { showResult($("#vout"), j); return }
+  toast(`${L.published} v${j.version}`); $("#comment").value = ""; await load(); $("#vout").innerHTML = "";
+};
+$("#preview").onclick = async () => {
+  const user_id = $("#pv-user").value.trim() || "guest";
+  const j = await api("/admin/api/preview", payload({user_id, scene: $("#pv-scene").value, market: $("#pv-market").value || null,
+    parent_item_id: $("#pv-parent").value.trim() || null, lang: L === I18N.zh ? "zh" : "en", size: 10}));
+  if (!j.ok) { showResult($("#pout"), j); return }
+  const cur = new Set(j.current.items.map((i) => i.id)), dr = new Set(j.draft.items.map((i) => i.id));
+  const col = (title, items, other) => `<div><b>${title}</b> <span class="muted">${items.length}</span><ol>` +
+    items.map((i) => `<li class="${other.has(i.id) ? "same" : "newi"}" title="${esc(i.sources.join(", "))}">${esc(i.title)} <span class="muted">· ${esc(i.category_label || i.category)}${i.price != null ? " · " + i.price + " " + esc(i.currency || "") : ""}</span></li>`).join("") + `</ol></div>`;
+  $("#pout").innerHTML = `<div class="small muted">${L.overlap} ${j.overlap}/${j.size} · ${L.only_draft}</div>` +
+    (j.warnings.length ? `<div class="msg warn">${j.warnings.map(esc).join("\n")}</div>` : "") +
+    `<div class="cmp">${col(L.current, j.current.items, dr)}${col(L.draft, j.draft.items, cur)}</div>`;
+};
+async function history(){
+  const j = await api("/admin/api/versions");
+  $("#hist").innerHTML = j.versions.map((v) => `<div class="ver"><span><b>v${v.id}</b> ${esc(v.comment)}<br><span class="muted">${esc(v.created_by)} · ${esc(v.created_at)}</span></span>` +
+    (v.is_active ? `<span class="pill">${L.active}</span>` : `<button data-rb="${v.id}">${L.rollback}</button>`) + `</div>`).join("") +
+    (j.audit.length ? `<h3>${L.audit}</h3>` + j.audit.map((a) => `<div class="small muted">${esc(a.at)} · ${esc(a.actor)} · ${esc(a.action)} ${esc(JSON.stringify(a.detail))}</div>`).join("") : "");
+  $("#hist").querySelectorAll("[data-rb]").forEach((b) => b.onclick = async () => {
+    if (!confirm(`${L.rollback} v${b.dataset.rb}?`)) return;
+    const r = await api("/admin/api/rollback", {version: +b.dataset.rb, author: "console"});
+    if (r.ok) { toast(`${L.rolled} v${r.version}`); load() } else toast((r.errors || [r.detail]).join("; "));
+  });
+}
+
+$("#token").value = store.get("console.token") || "";
+$("#token").onchange = () => { store.set("console.token", $("#token").value); load() };
+$("#lang").value = L === I18N.zh ? "zh" : "en";
+$("#lang").onchange = () => { L = I18N[$("#lang").value]; store.set("console.lang", $("#lang").value); applyLang() };
+applyLang(); load().catch((e) => toast(String(e)));
+</script>
+</body>
+</html>

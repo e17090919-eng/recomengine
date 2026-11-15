@@ -1,6 +1,5 @@
-"""Tables, catalog and user state. Storage is in-memory here; the interfaces
-(UserStore.add_event / history, Catalog.available) are what Redis-backed
-implementations will provide in production."""
+"""Tables, catalog and user state. The catalog and the user snapshot are built by the
+batch; real-time user state is overlaid from a `LiveState` (memory or Redis)."""
 
 from __future__ import annotations
 
@@ -9,6 +8,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -16,11 +16,14 @@ import pandas as pd
 from recsys_core.config import load_config  # re-exported for callers
 from recsys_core.lake import Lake
 
+from .state import MAX_EVENTS, LiveState, MemoryLive
+
 __all__ = ["DAY", "EVENT_WEIGHTS", "Catalog", "Clock", "ItemStats", "Profile", "Tables", "UserStore", "load_config"]
 
 DAY = 86400
 EVENT_WEIGHTS = {"click": 1.0, "favorite": 2.0, "add_cart": 3.0, "purchase": 4.0}
 ENGAGE_EVENTS = set(EVENT_WEIGHTS)
+SNAPSHOT_EVENTS = ENGAGE_EVENTS | {"dislike"}
 
 
 @dataclass
@@ -48,10 +51,12 @@ class Tables:
         for c, d in (("country", ""), ("language", "en"), ("member_level", 0), ("allowance_used", 0.0)):
             u[c] = u[c].fillna(d)
         meta = {**lake.meta(), "dropped_unknown_item_events": int((~known).sum())}
+        im = apply_item_changes(lake.read("item_market"), lake.changes("item"))
+        meta["applied_item_changes"] = len(lake.changes("item"))
         return cls(
             users=u,
             items=items,
-            item_market=lake.read("item_market"),
+            item_market=im,
             behaviors=b,
             categories=lake.read("category"),
             meta=meta,
@@ -68,6 +73,20 @@ class Tables:
         if "start_ts" in self.meta and "n_days" in self.meta:
             return int(self.meta["start_ts"] + self.meta["n_days"] * DAY)
         return int(self.behaviors["ts"].max()) + 1
+
+
+def apply_item_changes(im: pd.DataFrame, ch: pd.DataFrame) -> pd.DataFrame:
+    """Overlay real-time price/stock changes (latest wins) on the item_market snapshot."""
+    if ch.empty:
+        return im
+    im = im.set_index(["item_id", "market"])
+    for col in ("price", "stock"):
+        if col not in ch:
+            continue
+        last = ch.dropna(subset=[col]).groupby(["item_id", "market"])[col].last()
+        last = last[last.index.isin(im.index)]
+        im.loc[last.index, col] = last.astype(im[col].dtype).to_numpy()
+    return im.reset_index()
 
 
 # ----------------------------------------------------------------- catalog
@@ -196,46 +215,91 @@ class Profile:
     allowance_used: float = 0.0
 
 
-class UserStore:
-    """Per-user profile + engagement history (+ recent impressions)."""
+PROFILE_FIELDS = {"market", "country", "language", "member_level", "allowance_used"}
 
-    def __init__(self, max_events: int = 500, max_impressions: int = 300):
+
+class UserStore:
+    """Per-user profile + engagement history.
+
+    Snapshot part (`profiles`, `events`) is built by the batch at `cutoff_ts` and is
+    read-only while serving; everything after the cutoff lives in `live` (shared across
+    workers when it is Redis) and is overlaid at read time."""
+
+    def __init__(
+        self,
+        item_ids: np.ndarray | None = None,
+        cutoff_ts: float = 0.0,
+        live: LiveState | None = None,
+        max_events: int = MAX_EVENTS,
+    ):
         self.profiles: dict[str, Profile] = {}
         self.events: dict[str, deque] = defaultdict(partial(deque, maxlen=max_events))
-        self.impressions: dict[str, deque] = defaultdict(partial(deque, maxlen=max_impressions))
+        self.item_ids = item_ids if item_ids is not None else np.zeros(0, dtype=object)
+        self.id2idx = {str(k): i for i, k in enumerate(self.item_ids)}
+        self.cutoff_ts = cutoff_ts
+        self.built_at = time.time()
+        self.live: LiveState = live or MemoryLive()
 
-    def upsert_profile(self, p: Profile) -> None:
-        self.profiles[p.user_id] = p
+    def __getstate__(self) -> dict:
+        d = self.__dict__.copy()
+        d["live"] = None  # connections / live data are never pickled with the snapshot
+        return d
 
+    def __setstate__(self, d: dict) -> None:
+        self.__dict__.update(d)
+        self.live = MemoryLive()
+
+    # ---- writes (serving time -> live state)
     def add_event(self, user_id: str, ts: float, item_idx: int, event_type: str, paid: float = 0.0) -> None:
-        if event_type == "impression":
-            self.impressions[user_id].append((ts, item_idx))
-        elif event_type in ENGAGE_EVENTS or event_type == "dislike":
-            self.events[user_id].append((ts, item_idx, event_type))
-            if event_type == "purchase" and user_id in self.profiles:
-                self.profiles[user_id].allowance_used += paid
+        self.add_events(user_id, [(ts, str(self.item_ids[item_idx]), event_type, paid)])
 
-    def history(self, user_id: str) -> list[tuple]:
-        return list(self.events.get(user_id, ()))
+    def add_events(self, user_id: str, events: list[tuple[float, str, str, float]]) -> None:
+        recv = time.time()
+        self.live.add_events(user_id, [(*e, recv) for e in events])
 
-    def recent_impressions(self, user_id: str) -> list[tuple]:
-        return list(self.impressions.get(user_id, ()))
+    def patch_profile(self, user_id: str, fields: dict[str, Any]) -> None:
+        f = {k: v for k, v in fields.items() if k in PROFILE_FIELDS}
+        if "allowance_used" in f:
+            f["_allowance_ts"] = time.time()  # authoritative as of now; later purchases add on top
+        self.live.patch_profile(user_id, f)
+
+    # ---- reads
+    def view(self, user_id: str) -> tuple[Profile | None, list[tuple[float, int, str]]]:
+        """(profile, history) with live data overlaid; history = [(ts, item_idx, event_type)]."""
+        base = self.profiles.get(user_id)
+        patch = self.live.profile_patch(user_id)
+        # live events received before this snapshot was built are already in it
+        live_ev = [e for e in self.live.events(user_id) if e[4] >= self.built_at]
+        hist = list(self.events.get(user_id, ()))
+        hist += [(e[0], self.id2idx[e[1]], e[2]) for e in live_ev if e[1] in self.id2idx and e[2] in SNAPSHOT_EVENTS]
+        if base is None and not patch:
+            return None, hist
+        fields = dict(base.__dict__) if base else {"user_id": user_id, "market": patch.get("market", "")}
+        fields.update({k: v for k, v in patch.items() if k in PROFILE_FIELDS})
+        prof = Profile(**fields)
+        since = float(patch.get("_allowance_ts", 0.0))
+        prof.allowance_used += sum(float(e[3] or 0) for e in live_ev if e[2] == "purchase" and e[4] >= since)
+        return prof, hist
+
+    def profile(self, user_id: str) -> Profile | None:
+        return self.view(user_id)[0]
+
+    def history(self, user_id: str) -> list[tuple[float, int, str]]:
+        return self.view(user_id)[1]
 
     @classmethod
     def build(cls, t: Tables, catalog: Catalog, cutoff_ts: float) -> UserStore:
-        s = cls()
+        s = cls(catalog.item_ids, cutoff_ts)
         for r in t.users.to_dict("records"):
-            s.upsert_profile(
-                Profile(
-                    str(r["user_id"]),
-                    str(r["market"]),
-                    str(r["country"]),
-                    str(r["language"]),
-                    int(r["member_level"]),
-                    float(r["allowance_used"]),
-                )
+            s.profiles[str(r["user_id"])] = Profile(
+                str(r["user_id"]),
+                str(r["market"]),
+                str(r["country"]),
+                str(r["language"]),
+                int(r["member_level"]),
+                float(r["allowance_used"]),
             )
-        b = t.behaviors[t.behaviors["ts"] < cutoff_ts]
+        b = t.behaviors[(t.behaviors["ts"] < cutoff_ts) & t.behaviors["event_type"].isin(SNAPSHOT_EVENTS)]
         idx = b["item_id"].map(catalog.id2idx)
         for uid, ts, ix, et, paid in zip(
             b["user_id"].to_numpy(),
@@ -245,7 +309,9 @@ class UserStore:
             b["paid_amount"].to_numpy(),
         ):
             if ix == ix:  # not NaN
-                s.add_event(uid, float(ts), int(ix), et, float(paid))
+                s.events[uid].append((float(ts), int(ix), et))
+                if et == "purchase" and uid in s.profiles:
+                    s.profiles[uid].allowance_used += float(paid)
         return s
 
 

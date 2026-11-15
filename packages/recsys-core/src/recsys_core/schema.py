@@ -122,7 +122,23 @@ TABLES: dict[str, Table] = {
         ),
         "Append-only event log, partitioned by UTC day (dt=YYYYMMDD).",
     ),
+    "rec_log": Table(
+        "rec_log",
+        (),
+        (
+            C("request_id", "string", True, "Recommendation request id", "推荐请求 ID"),
+            C("user_id", "string", True, "Shopper id", "用户 ID"),
+            C("ts", "int64", True, "Serving time, unix seconds UTC", "下发时间（UTC 秒）"),
+            C("slot", "string", True, "Slot that served the request", "栏位"),
+            C("market", "string", True, "Market", "市场"),
+            C("variants", "string", False, "A/B assignment, 'layer=variant' joined by ','", "实验分组"),
+            C("items", "string", True, "Returned item ids in order, '|' separated", "下发的商品（有序，竖线分隔）"),
+            C("degraded", "string", False, "Degradation reasons, ',' separated; empty = none", "降级原因"),
+        ),
+        "Written by the engine for every request: joins behaviors to slots/variants for attribution.",
+    ),
 }
+PARTITIONED = ("behavior", "rec_log")
 
 EVENT_TYPES: dict[str, str] = {
     "impression": "Item visible ≥50% for ≥1s (client-side, deduplicated per request)",

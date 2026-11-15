@@ -7,6 +7,7 @@ recsys-core = { workspace = true }
 rec-server = { workspace = true }
 recsys-batch = { workspace = true }
 recsys-tools = { workspace = true }
+recsys-client = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -14,11 +15,13 @@ dev = [
     "rec-server",
     "recsys-batch",
     "recsys-tools",
+    "recsys-client",
     "pytest>=8",
     "httpx>=0.27",
     "ruff>=0.6",
     "mypy>=1.11",
     "pandas-stubs>=2.2",
+    "fakeredis>=2.23",
 ]
 
 [tool.ruff]
@@ -30,15 +33,24 @@ extend-exclude = ["lake", "raw", "artifacts"]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
 ignore = ["RUF001", "RUF002", "RUF003", "SIM108", "B905"]
 
+[tool.ruff.lint.per-file-ignores]
+"packages/sdk-python/src/**" = ["UP"]  # the SDK supports Python 3.9 (typing.Optional etc.)
+
 [tool.ruff.lint.isort]
-known-first-party = ["recsys_core", "rec_server", "recsys_batch", "recsys_tools"]
+known-first-party = ["recsys_core", "rec_server", "recsys_batch", "recsys_tools", "recsys_client"]
 
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
 warn_unused_ignores = true
 check_untyped_defs = true
-files = ["packages/recsys-core/src", "packages/rec-server/src", "packages/batch/src", "tools/src"]
+files = [
+    "packages/recsys-core/src",
+    "packages/rec-server/src",
+    "packages/batch/src",
+    "packages/sdk-python/src",
+    "tools/src",
+]
 
 [[tool.mypy.overrides]]
 module = "recsys_core.*"
@@ -47,4 +59,7 @@ disallow_untyped_defs = true
 [tool.pytest.ini_options]
 testpaths = ["packages", "tools"]
 addopts = "--import-mode=importlib -q"
-filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]
+filterwarnings = [
+    "ignore:Using `httpx` with `starlette.testclient`",
+    "ignore:You should not use the 'timeout' argument with the TestClient",
+]

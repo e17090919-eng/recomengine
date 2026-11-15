@@ -5,8 +5,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 /lake/
+/lake_ab/
 /raw/
 /artifacts/
 /reports/*.md
+/reports/*.json
 !/reports/.gitkeep
 .DS_Store

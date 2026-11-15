@@ -63,12 +63,13 @@ def build_user_ctx(
     default_market: str,
     half_life_days: float = 7.0,
 ) -> UserCtx:
-    prof = store.profiles.get(user_id) or Profile(user_id=user_id, market=market or default_market)
-    mkt = market or prof.market
+    prof_, history = store.view(user_id)
+    prof = prof_ or Profile(user_id=user_id, market=market or default_market)
+    mkt = market or prof.market or default_market
     ctx = UserCtx(user_id=user_id, market=mkt, profile=prof, now=now, spend=prof.allowance_used)
     nc, nb = len(catalog.cat_names), len(catalog.brand_names)
     ctx.cat_w, ctx.brand_w = np.zeros(nc), np.zeros(nb)
-    hist = [h for h in store.history(user_id) if h[0] <= now]
+    hist = [h for h in history if h[0] <= now]
     if not hist:
         return ctx
     item_w: dict[int, float] = {}

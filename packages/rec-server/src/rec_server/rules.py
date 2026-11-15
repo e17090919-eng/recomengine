@@ -25,13 +25,58 @@ class RuleCtx:
     filter_spec: dict = field(default_factory=dict)  # request context.filter
     issued: set[int] = field(default_factory=set)  # cross-request dedup
     allowance_remaining: float | None = None
+    repurchase_days: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    pool: dict = field(default_factory=dict)  # slot item pool (config)
 
 
 Filter = Callable[[np.ndarray, RuleCtx], np.ndarray]
 
 
+def pool_mask(catalog: Catalog, market: str, market_cfg: dict, pool: dict | None) -> np.ndarray:
+    """Items allowed by the market's compliance blocks and the slot's item pool (full catalog)."""
+    keep = np.ones(catalog.n, bool)
+
+    def cats(names: list[str]) -> np.ndarray:
+        return np.isin(catalog.cat, [catalog.cat_names.index(x) for x in names if x in catalog.cat_names])
+
+    def brands(names: list[str]) -> np.ndarray:
+        return np.isin(catalog.brand, [catalog.brand_names.index(x) for x in names if x in catalog.brand_names])
+
+    def items(ids: list[str]) -> np.ndarray:
+        m = np.zeros(catalog.n, bool)
+        m[[i for i in (catalog.idx(x) for x in ids) if i is not None]] = True
+        return m
+
+    if market_cfg.get("blocked_categories"):
+        keep &= ~cats(market_cfg["blocked_categories"])
+    if market_cfg.get("blocked_items"):
+        keep &= ~items(market_cfg["blocked_items"])
+    p = pool or {}
+    if p.get("include_categories"):
+        keep &= cats(p["include_categories"])
+    if p.get("exclude_categories"):
+        keep &= ~cats(p["exclude_categories"])
+    if p.get("include_brands"):
+        keep &= brands(p["include_brands"])
+    if p.get("exclude_brands"):
+        keep &= ~brands(p["exclude_brands"])
+    if p.get("exclude_items"):
+        keep &= ~items(p["exclude_items"])
+    price = catalog.price.get(market)
+    if price is not None:
+        if p.get("min_price") is not None:
+            keep &= price >= p["min_price"]
+        if p.get("max_price") is not None:
+            keep &= price <= p["max_price"]
+    return keep
+
+
 def item_pool(c: np.ndarray, r: RuleCtx) -> np.ndarray:
-    return r.avail[c]
+    """Sellable in the market now, not blocked by compliance, inside the slot's item pool."""
+    keep = r.avail[c]
+    if r.pool or r.market_cfg.get("blocked_categories") or r.market_cfg.get("blocked_items"):
+        keep &= pool_mask(r.catalog, r.ctx.market, r.market_cfg, r.pool)[c]
+    return keep
 
 
 def request_filter(c: np.ndarray, r: RuleCtx) -> np.ndarray:
@@ -53,8 +98,17 @@ def request_filter(c: np.ndarray, r: RuleCtx) -> np.ndarray:
     return keep
 
 
-def purchased(c: np.ndarray, r: RuleCtx, days: float = 90) -> np.ndarray:
-    recent = [i for i, ts in r.ctx.purchased.items() if r.ctx.now - ts <= days * DAY]
+def purchased(c: np.ndarray, r: RuleCtx, days: float = 90, early: float = 0.7) -> np.ndarray:
+    """Hide recently bought items — except consumables that are due again
+    (`early` x the category's learned repurchase cycle has passed)."""
+    cyc = r.repurchase_days
+    recent = []
+    for i, ts in r.ctx.purchased.items():
+        window = days
+        if len(cyc) and np.isfinite(cyc[r.catalog.cat[i]]):
+            window = min(days, early * cyc[r.catalog.cat[i]])
+        if r.ctx.now - ts <= window * DAY:
+            recent.append(i)
     return ~np.isin(c, recent)
 
 

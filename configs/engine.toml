@@ -7,9 +7,9 @@ app_id = "demo"
 default_market = "CN-HAINAN"
 
 [auth]
-enabled = false          # set true + token to require Tenant-Signature on /predict
+enabled = false          # set true + token to require Tenant-Signature on /predict and /data
 tenant_id = "demo"
-token = "change-me"
+token = "${RECSYS_TENANT_TOKEN:-change-me}"   # ${ENV} / ${ENV:-default} are expanded at load time
 
 # ---------------------------------------------------------------- markets
 [markets.CN-HAINAN]
@@ -43,6 +43,7 @@ recalls = [
   { name = "swing",     quota = 200, weight = 1.0 },
   { name = "embedding", quota = 150, weight = 0.8 },
   { name = "new_items", quota = 30,  weight = 0.4 },
+  { name = "repurchase", quota = 20, weight = 1.1, params = { early = 0.7, late = 2.5 } },
 ]
 filters = ["item_pool", "request_filter", "purchased", "allowance", "category_limit", "issued_dedup"]
 boost_new = { days = 7, weight = 0.15 }
@@ -67,11 +68,36 @@ size = 12
 ranker = "gbdt"
 recalls = [
   { name = "bought_together", quota = 150, weight = 1.2 },
+  { name = "repurchase",      quota = 20,  weight = 1.0 },
   { name = "interest",        quota = 80,  weight = 0.8 },
   { name = "hot",             quota = 50,  weight = 0.4 },
 ]
 filters = ["item_pool", "request_filter", "in_cart", "purchased", "allowance", "category_limit"]
 dispersion = [ { field = "category", window = 4, max = 2 } ]
+
+# ---------------------------------------------------------------- serving / state / ingest
+[serving]
+timeout_ms = 150           # whole-request budget; GBDT is skipped past 70% of it
+recall_budget_ms = 60      # later recall channels are skipped past this
+rank_max_candidates = 500
+fallback_size = 20
+
+[state]
+backend = "memory"         # "redis" when running more than one worker / pod
+url = "${RECSYS_REDIS_URL:-redis://localhost:6379/0}"
+
+[ingest]
+bus = "lake"               # lake (single node) | kafka | none
+lake_dir = "lake"
+kafka_bootstrap = "localhost:9092"
+flush_rows = 5000
+flush_seconds = 10
+
+[admin]
+enabled = true             # config console at /admin
+token = "${RECSYS_ADMIN_TOKEN:-}"   # empty = no token (dev only)
+store = "${RECSYS_CONFIG_STORE:-sqlite:///artifacts/config.db}"   # postgresql://... in production
+poll_seconds = 5
 
 # ---------------------------------------------------------------- A/B
 # Layers are orthogonal; variants inside a layer are mutually exclusive.

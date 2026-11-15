@@ -16,5 +16,8 @@ COPY configs ./configs
 ENV PATH="/app/.venv/bin:$PATH" RECSYS_HOME=/app PYTHONUNBUFFERED=1
 USER app
 EXPOSE 8000
-# artifacts/engine.pkl is mounted (k8s: PVC or init container pulling from object storage)
-CMD ["recsys", "serve", "--host", "0.0.0.0", "--port", "8000"]
+# artifacts/engine.pkl (+ ranker.onnx) is mounted (k8s: PVC or init container pulling from object storage).
+# WORKERS > 1 needs [state] backend = "redis" (shared real-time state).
+ENV WORKERS=1
+# metrics of all workers are aggregated through this directory (cleared on start)
+CMD ["sh", "-c", "rm -rf /tmp/prom && mkdir -p /tmp/prom && PROMETHEUS_MULTIPROC_DIR=/tmp/prom exec recsys serve --host 0.0.0.0 --port 8000 --workers ${WORKERS} --log-level warning"]

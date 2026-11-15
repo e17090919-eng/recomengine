@@ -3,12 +3,14 @@
 Layout:
     <root>/user.parquet, item.parquet, item_market.parquet, category.parquet   (snapshots)
     <root>/behavior/dt=YYYYMMDD/part-*.parquet                               (append log)
+    <root>/rec_log/dt=YYYYMMDD/part-*.parquet                                (engine request log)
     <root>/_meta.json
 """
 
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
 
-from .schema import TABLES, conform
+from .schema import PARTITIONED, TABLES, conform
 
 SNAPSHOT_TABLES = ("user", "item", "item_market", "category")
 
@@ -42,7 +44,7 @@ class Lake:
 
     # ------------------------------------------------------------ write
     def write(self, table: str, df: pd.DataFrame, mode: str = "overwrite") -> int:
-        """Conform to the canonical schema and write. Behavior partitions present in `df`
+        """Conform to the canonical schema and write. Partitions present in `df`
         are replaced when mode='overwrite' (idempotent re-runs of a backfill day)."""
         if table not in TABLES:
             raise KeyError(f"unknown table {table}")
@@ -60,7 +62,7 @@ class Lake:
         tbl = pa.Table.from_pandas(out, preserve_index=False)
         ds.write_dataset(
             tbl,
-            self.root / "behavior",
+            self.root / table,
             format="parquet",
             partitioning=["dt"],
             partitioning_flavor="hive",
@@ -73,7 +75,7 @@ class Lake:
     def exists(self, table: str) -> bool:
         if table in SNAPSHOT_TABLES:
             return (self.root / f"{table}.parquet").exists()
-        return (self.root / "behavior").exists()
+        return (self.root / table).exists()
 
     def read(
         self, table: str, start_ts: float | None = None, end_ts: float | None = None, numpy: bool = True
@@ -85,7 +87,12 @@ class Lake:
                 return pd.DataFrame(columns=cols)
             df = pd.read_parquet(p)
         else:
-            dset = ds.dataset(self.root / "behavior", format="parquet", partitioning="hive")
+            d = self.root / table
+            if table not in PARTITIONED:
+                raise KeyError(f"unknown table {table}")
+            if not d.exists():
+                return pd.DataFrame(columns=[c.name for c in TABLES[table].columns])
+            dset = ds.dataset(d, format="parquet", partitioning="hive")
             flt = None
             if start_ts is not None:
                 flt = ds.field("ts") >= int(start_ts)
@@ -95,14 +102,37 @@ class Lake:
             df = dset.to_table(filter=flt).to_pandas()
             df = (
                 df.drop(columns=["dt"], errors="ignore")
-                .sort_values(["ts", "user_id", "item_id", "event_type"], kind="stable")
+                .sort_values(
+                    [c for c in ("ts", "user_id", "item_id", "event_type", "request_id") if c in df], kind="stable"
+                )
                 .reset_index(drop=True)
             )
         return numpy_dtypes(df) if numpy else df
 
-    def partitions(self) -> list[str]:
-        d = self.root / "behavior"
+    def partitions(self, table: str = "behavior") -> list[str]:
+        d = self.root / table
         return sorted(p.name.removeprefix("dt=") for p in d.glob("dt=*")) if d.exists() else []
+
+    def changes(self, table: str) -> pd.DataFrame:
+        """Real-time change log written by the serving bus (`_changes/<table>/`), in arrival order."""
+        d = self.root / "_changes" / table
+        files = sorted(d.glob("*.parquet")) if d.exists() else []
+        if not files:
+            return pd.DataFrame()
+        df = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+        return df.sort_values("recv", kind="stable").reset_index(drop=True) if "recv" in df else df
+
+    # ------------------------------------------------------------ completeness markers
+    def mark_done(self, table: str, date: str) -> None:
+        """Customer signals that `table` is complete for local business `date` (YYYYMMDD);
+        the daily batch waits for these before training."""
+        d = self.root / "_done" / table
+        d.mkdir(parents=True, exist_ok=True)
+        (d / date).write_text(json.dumps({"marked_at": time.time()}))
+
+    def done_dates(self, table: str) -> list[str]:
+        d = self.root / "_done" / table
+        return sorted(p.name for p in d.iterdir()) if d.exists() else []
 
     # ------------------------------------------------------------ meta
     def write_meta(self, meta: dict[str, Any]) -> None:

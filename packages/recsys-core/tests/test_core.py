@@ -132,3 +132,16 @@ def test_schema_doc_lists_all_tables():
     md = to_markdown()
     for t in ("`user`", "`item`", "`item_market`", "`behavior`", "Event types"):
         assert t in md
+
+
+def test_env_expansion_in_config(monkeypatch):
+    from recsys_core.config import expand_env
+
+    monkeypatch.setenv("RS_TOKEN", "s3cret")
+    monkeypatch.delenv("RS_MISSING", raising=False)
+    out = expand_env({"a": "${RS_TOKEN}", "b": ["x-${RS_MISSING:-dflt}"], "c": 3, "d": "${RS_MISSING:-}"})
+    assert out == {"a": "s3cret", "b": ["x-dflt"], "c": 3, "d": ""}
+    import pytest
+
+    with pytest.raises(ValueError, match="RS_MISSING"):
+        expand_env({"a": "${RS_MISSING}"})

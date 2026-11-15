@@ -81,6 +81,23 @@ Primary key: `—`
 | `parent_item_id` | string |  | Seed item for related-item scenes | 相关推荐的种子商品 |
 | `paid_amount` | float64 |  | Amount paid (purchase events, local currency) | 支付金额（本币） |
 
+## `rec_log`
+
+Written by the engine for every request: joins behaviors to slots/variants for attribution.
+
+Primary key: `—`
+
+| column | type | required | description | 说明 |
+|---|---|---|---|---|
+| `request_id` | string | ✔ | Recommendation request id | 推荐请求 ID |
+| `user_id` | string | ✔ | Shopper id | 用户 ID |
+| `ts` | int64 | ✔ | Serving time, unix seconds UTC | 下发时间（UTC 秒） |
+| `slot` | string | ✔ | Slot that served the request | 栏位 |
+| `market` | string | ✔ | Market | 市场 |
+| `variants` | string |  | A/B assignment, 'layer=variant' joined by ',' | 实验分组 |
+| `items` | string | ✔ | Returned item ids in order, '|' separated | 下发的商品（有序，竖线分隔） |
+| `degraded` | string |  | Degradation reasons, ',' separated; empty = none | 降级原因 |
+
 ## Event types
 
 | event_type | meaning |

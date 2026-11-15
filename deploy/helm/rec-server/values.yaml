@@ -4,10 +4,17 @@ image:
   pullPolicy: IfNotPresent
 
 replicas: 2
-# one uvicorn worker per container; scale with replicas/HPA (≈300–400 QPS per pod measured on 1 core)
+# uvicorn workers per pod. Measured on a 12-core laptop: 8 workers ≈ 3,300 QPS closed loop,
+# 2,000 req/s open loop at P99 38 ms (reports/loadtest.md). Size ≈ 400 QPS per worker-core.
+workers: 2
 resources:
-  requests: {cpu: "1", memory: 2Gi}
+  requests: {cpu: "2", memory: 3Gi}
   limits: {cpu: "2", memory: 4Gi}
+
+# More than one pod/worker REQUIRES shared real-time state ([state] backend = "redis" in
+# engineConfig). Secrets are injected as env and referenced from engineConfig.
+env: []
+#  - {name: RECSYS_REDIS_URL, valueFrom: {secretKeyRef: {name: recsys, key: redis-url}}}
 
 autoscaling:
   enabled: true

@@ -10,8 +10,15 @@ dependencies = [
     "scipy>=1.12",
     "scikit-learn>=1.4",
     "fastapi>=0.110",
-    "uvicorn>=0.29",
+    "uvicorn[standard]>=0.29",
     "prometheus-client>=0.20",
+    "tomli-w>=1.0",
+    # production backends (imported lazily; nothing needs to run locally)
+    "redis>=5.0",  # [state] backend = "redis"
+    "confluent-kafka>=2.3",  # [ingest] bus = "kafka"
+    "onnx>=1.16",  # ranker export
+    "onnxruntime>=1.18",  # ranker serving
+    "psycopg[binary]>=3.1",  # [admin] store = "postgresql://..."
 ]
 
 [project.optional-dependencies]

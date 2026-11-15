@@ -102,3 +102,26 @@ def test_baseline_report_on_backfilled_lake(pipeline):
     )
     for s in ("Ranking quality", "GBDT ranker", "Hot score", "Swing", "HitRate@20", "NDCG@20", "sim. CTR"):
         assert s in report
+
+
+def test_ab_sim_end_to_end(tmp_path):
+    from rec_server.data import Tables, load_config
+    from rec_server.pipeline import build_engine, save_engine
+    from recsys_batch.report import daily_report
+    from recsys_tools.abtest_sim import run_ab_sim
+    from recsys_tools.simulator import simulate, write_lake
+
+    sim = simulate(n_users=400, n_items=400, n_brands=30, n_days=10, seed=11)
+    write_lake(sim, tmp_path / "lake")
+    cfg = load_config()
+    t = Tables.load(tmp_path / "lake")
+    save_engine(build_engine(cfg, t, t.end_ts, sample_days=3, log=lambda *a: None), tmp_path / "e.pkl")
+    date, cfg_ab = run_ab_sim(
+        cfg, tmp_path / "e.pkl", tmp_path / "lake", tmp_path / "ab", sim.truth.oracle(), 300, log=lambda *a: None
+    )
+    rep = daily_report(str(tmp_path / "ab"), cfg_ab, date)
+    assert set(rep.rows["variant"]) == {"incumbent", "multi_recall", "gbdt"}
+    log = Lake(tmp_path / "ab").read("rec_log")
+    assert rep.rows["requests"].sum() == len(log) == 300
+    assert rep.rows["impressions"].sum() == log["items"].str.count(r"\|").add(1).sum()
+    assert rep.rows["purchase"].sum() > 0 and rep.meta["variant_source"] == "request log"

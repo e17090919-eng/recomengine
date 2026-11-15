@@ -47,8 +47,24 @@ p0: raw backfill baseline  ## full P0 pipeline: raw -> backfill -> quality -> ba
 train:  ## train on the full lake -> artifacts/engine.pkl
 	$(UV) run recsys train
 
-serve: train  ## API + demo UI on :8000
+serve: train  ## API + demo UI on :8000 (console: /admin)
 	$(UV) run recsys serve
+
+WORKERS ?= 8
+serve-multi:  ## N workers (WORKERS=8); needs [state] backend = "redis" for real-time consistency
+	$(UV) run recsys serve --workers $(WORKERS) --log-level warning
+
+ab-sim: train  ## online A/B simulation through the production path + daily report
+	$(UV) run recsys ab-sim --sessions 20000
+
+DATE ?=
+report:  ## T+1 daily report for DATE=YYYYMMDD on the lake
+	$(UV) run recsys report --date $(DATE)
+
+loadtest:  ## load test a running server (make serve-multi in another shell)
+	$(UV) run recsys loadtest --concurrency 32,64,128 --rate 2000,3000 --duration 20
+
+p1: p0 train ab-sim  ## P0 + train (ONNX export) + online A/B simulation
 
 infra-up:  ## start local infra (docker compose)
 	docker compose -f deploy/docker-compose.yml up -d
@@ -59,4 +75,4 @@ infra-down:  ## stop local infra
 infra-check:  ## verify local infra endpoints respond
 	./deploy/check-infra.sh
 
-.PHONY: help setup lint fmt typecheck test check docs raw backfill quality baseline p0 train serve infra-up infra-down infra-check
+.PHONY: help setup lint fmt typecheck test check docs raw backfill quality baseline p0 train serve serve-multi ab-sim report loadtest p1 infra-up infra-down infra-check

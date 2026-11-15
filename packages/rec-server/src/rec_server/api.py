@@ -3,28 +3,37 @@
 /predict/api/{app_id}/default   recommendation (request/response shape compatible with the
                                 Volcengine predict API, so clients can switch either way)
 /predict/api/{app_id}/callback  report what was actually shown (dedup / attribution)
-/data/api/{app_id}/{table}/write  real-time data ingestion (behaviors, item price/stock, users)
+/data/api/{app_id}/{table}/write  real-time ingestion (behavior / item price+stock / user profile)
+/data/api/{app_id}/done         "data for <table, date> is complete" marker for the daily batch
 /demo/*                         helpers for the demo UI (enriched items + pipeline trace)
 """
 
 from __future__ import annotations
 
+import inspect
+import os
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi import Request as HTTPRequest
 from fastapi.responses import FileResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
 
-from recsys_core.config import load_config
+from recsys_core.config import RESTART_SECTIONS, hot_sections, load_config
 from recsys_core.signing import verify
 
-from .data import ENGAGE_EVENTS, Profile
+from .admin import ConfigError, ConfigStore, ConfigWatcher, check, diff
+from .bus import Bus, make_bus
 from .engine import Engine, Recommendation, Request, SlotNotFound, trans_data
+from .ingest import Ingestor
 from .pipeline import load_engine
+from .recall import RECALLS
+from .rules import FILTERS
 
 WEB = Path(__file__).parent / "web"
 
@@ -43,6 +52,7 @@ STAGE = Histogram(
 )
 EMPTY = Counter("rec_empty_results_total", "Requests that returned no items", ["slot"])
 EVENTS = Counter("ingest_events_total", "Rows written via the data API", ["table", "status"])
+DEGRADED = Counter("rec_degraded_total", "Requests served with a degraded pipeline", ["slot", "reason"])
 
 
 def observe(rec: Recommendation) -> None:
@@ -51,6 +61,8 @@ def observe(rec: Recommendation) -> None:
         STAGE.labels(stage).observe(ms / 1000)
     if not rec.items:
         EMPTY.labels(rec.slot).inc()
+    for d in rec.trace.get("degraded", []):
+        DEGRADED.labels(rec.slot, d.split(":")[0]).inc()
 
 
 # ------------------------------------------------------------------ schemas
@@ -102,6 +114,32 @@ class CallbackRequest(BaseModel):
     request_id: str | None = None
     spm: str | None = None
     items: list[ItemRef]
+
+
+class DraftRequest(BaseModel):
+    toml: str | None = None  # hot sections as TOML text ...
+    config: dict[str, Any] | None = None  # ... or as JSON (structured editor)
+    comment: str = ""
+    author: str = "console"
+
+
+class PreviewRequest(DraftRequest):
+    user_id: str
+    scene: str = "home_feed"
+    market: str | None = None
+    lang: str = "en"
+    parent_item_id: str | None = None
+    size: int | None = None
+
+
+class RollbackRequest(BaseModel):
+    version: int
+    author: str = "console"
+
+
+class DoneRequest(BaseModel):
+    table: str = "behavior"
+    date: str = Field(pattern=r"^\d{8}$")  # YYYYMMDD, customer-local business date
 
 
 class DemoRecommend(BaseModel):
@@ -161,12 +199,37 @@ def verify_signature(
     seen[nonce] = time.time()
 
 
-def create_app(artifact: Path | str, config_path: str | None = None, engine: Engine | None = None) -> FastAPI:
+def create_app(
+    artifact: Path | str,
+    config_path: str | None = None,
+    engine: Engine | None = None,
+    bus: Bus | None = None,
+    admin_store: str | None = None,
+) -> FastAPI:
+    """`engine` given (tests, simulations): the console is off unless `admin_store` is given."""
     cfg = load_config(config_path)
     eng = engine or load_engine(Path(artifact), cfg, live=True)
-    app = FastAPI(title="recsys demo", version="0.1.0")
+    if bus is not None:
+        eng.bus = bus
+    elif engine is None:
+        eng.bus = make_bus(cfg)
+    ingestor = Ingestor(eng)
+    watcher: ConfigWatcher | None = None
+    store: ConfigStore | None = None
+    if cfg.get("admin", {}).get("enabled") and (engine is None or admin_store):
+        store = ConfigStore(admin_store or cfg["admin"]["store"], cfg["app"]["app_id"])
+        watcher = ConfigWatcher(store, eng, cfg["admin"]["poll_seconds"])
+        watcher.bootstrap(cfg)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        yield
+        eng.bus.close()
+
+    app = FastAPI(title="recsys", version="0.2.0", lifespan=lifespan)
     nonces: dict[str, float] = {}
     app.state.engine = eng
+    app.state.watcher = watcher
 
     def resp(code: int, message: str, rid: str = "", items: list | None = None) -> dict:
         return {
@@ -177,34 +240,57 @@ def create_app(artifact: Path | str, config_path: str | None = None, engine: Eng
             "value": {"items": items or []},
         }
 
+    async def check(http: HTTPRequest, app_id: str) -> tuple[int, str] | None:
+        """Tenant signature + app id; returns (code, message) on failure."""
+        h = http.headers
+        try:
+            verify_signature(
+                cfg,
+                await http.body(),
+                h.get("Tenant-Id"),
+                h.get("Tenant-Ts"),
+                h.get("Tenant-Nonce"),
+                h.get("Tenant-Signature"),
+                nonces,
+            )
+        except HTTPException as e:
+            return 401, str(e.detail)
+        if app_id != cfg["app"]["app_id"]:
+            return 404, f"unknown app_id {app_id}"
+        return None
+
     @app.get("/metrics")
     def metrics() -> Response:
+        if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):  # several workers: aggregate all of them
+            from prometheus_client import CollectorRegistry, multiprocess
+
+            registry = CollectorRegistry()
+            multiprocess.MultiProcessCollector(registry)
+            return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @app.get("/healthz")
     def healthz() -> dict:
-        return {"ok": True, "items": eng.catalog.n, "users": len(eng.users.profiles)}
+        live_ok = eng.users.live.ping()
+        return {
+            "ok": live_ok,
+            "items": eng.catalog.n,
+            "snapshot_users": len(eng.users.profiles),
+            "live_users": eng.users.live.n_users() if live_ok else None,
+            "state": type(eng.users.live).__name__,
+            "bus": type(eng.bus).__name__,
+            "snapshot_cutoff_ts": eng.info.get("cutoff_ts"),
+        }
 
     @app.post("/predict/api/{app_id}/default")
-    async def predict(
-        app_id: str,
-        body: PredictRequest,
-        http: HTTPRequest,
-        tenant_id: str | None = Header(None, alias="Tenant-Id"),
-        tenant_ts: str | None = Header(None, alias="Tenant-Ts"),
-        tenant_nonce: str | None = Header(None, alias="Tenant-Nonce"),
-        tenant_sig: str | None = Header(None, alias="Tenant-Signature"),
-    ) -> dict:
+    async def predict(app_id: str, body: PredictRequest, http: HTTPRequest) -> dict:
+        if err := await check(http, app_id):
+            REQUESTS.labels("-", str(err[0])).inc()
+            return resp(*err)
+        if watcher is not None:
+            watcher.maybe_reload()
         try:
-            verify_signature(cfg, await http.body(), tenant_id, tenant_ts, tenant_nonce, tenant_sig, nonces)
-        except HTTPException as e:
-            REQUESTS.labels("-", "401").inc()
-            return resp(401, e.detail)
-        if app_id != cfg["app"]["app_id"]:
-            REQUESTS.labels("-", "404").inc()
-            return resp(404, f"unknown app_id {app_id}")
-        try:
-            rec = eng.recommend(_to_request(body))
+            rec = eng.recommend_safe(_to_request(body))
         except SlotNotFound:
             REQUESTS.labels("-", "404").inc()
             return resp(404, f"spm {body.context.spm} is not bound to a slot")
@@ -214,44 +300,44 @@ def create_app(artifact: Path | str, config_path: str | None = None, engine: Eng
             {"id": it["id"], "rank": n + 1, "transData": trans_data(rec, it), "extra": {"score": f"{it['score']:.6f}"}}
             for n, it in enumerate(rec.items)
         ]
-        return resp(200, "ok", rec.request_id, items)
+        out = resp(200, "ok", rec.request_id, items)
+        if rec.trace.get("degraded"):
+            out["degraded"] = rec.trace["degraded"]
+        return out
 
     @app.post("/predict/api/{app_id}/callback")
-    def callback(app_id: str, body: CallbackRequest) -> dict:
+    async def callback(app_id: str, body: CallbackRequest, http: HTTPRequest) -> dict:
+        if err := await check(http, app_id):
+            return resp(*err)
         idx = [i for i in (eng.catalog.idx(x.id) for x in body.items) if i is not None]
         eng.record_issued(body.uid, idx, eng.clock.now())
         return {"code": 200, "message": "ok", "success": True}
 
     @app.post("/data/api/{app_id}/{table}/write")
-    def write(app_id: str, table: str, rows: list[dict[str, Any]]) -> dict:
-        errors = []
-        now = eng.clock.now()
-        for n, r in enumerate(rows):
-            try:
-                if table == "behavior":
-                    i = eng.catalog.idx(r["item_id"])
-                    if i is None:
-                        raise ValueError(f"unknown item {r['item_id']}")
-                    et = r["event_type"]
-                    if et not in ENGAGE_EVENTS | {"impression", "dislike"}:
-                        raise ValueError(f"unregistered event_type {et}")
-                    eng.users.add_event(
-                        r["user_id"], float(r.get("ts") or now), i, et, float(r.get("paid_amount") or 0)
-                    )
-                elif table == "item":
-                    if not eng.catalog.update_market(r["item_id"], r["market"], r.get("price"), r.get("stock")):
-                        raise ValueError("unknown item or market")
-                elif table == "user":
-                    old = eng.users.profiles.get(r["user_id"])
-                    base = old.__dict__ if old else {}
-                    eng.users.upsert_profile(Profile(**{**base, **r}))
-                else:
-                    raise ValueError(f"unknown table {table}")
-            except (KeyError, ValueError, TypeError) as e:
-                errors.append({"index": n, "message": str(e)})
-        EVENTS.labels(table, "ok").inc(len(rows) - len(errors))
-        EVENTS.labels(table, "error").inc(len(errors))
-        return {"code": 200 if not errors else 206, "message": "ok", "success": not errors, "errors": errors}
+    async def write(app_id: str, table: str, rows: list[dict[str, Any]], http: HTTPRequest) -> dict:
+        if err := await check(http, app_id):
+            return {"code": err[0], "message": err[1], "success": False, "errors": []}
+        res = ingestor.write(table, rows)
+        EVENTS.labels(table, "ok").inc(res.accepted)
+        EVENTS.labels(table, "error").inc(len(res.errors))
+        code = 200 if not res.errors else (206 if res.accepted else 400)
+        return {
+            "code": code,
+            "message": "ok" if code == 200 else f"{len(res.errors)} of {len(rows)} rows rejected",
+            "success": not res.errors,
+            "accepted": res.accepted,
+            "errors": res.errors[:100],
+        }
+
+    @app.post("/data/api/{app_id}/done")
+    async def done(app_id: str, body: DoneRequest, http: HTTPRequest) -> dict:
+        if err := await check(http, app_id):
+            return {"code": err[0], "message": err[1], "success": False}
+        ingestor.done(body.table, body.date)
+        return {"code": 200, "message": "ok", "success": True}
+
+    if store is not None and watcher is not None:
+        mount_admin(app, eng, cfg, store, watcher)
 
     # ---------------------------------------------------------------- demo helpers
     @app.get("/")
@@ -326,7 +412,7 @@ def create_app(artifact: Path | str, config_path: str | None = None, engine: Eng
     def demo_recommend(body: DemoRecommend) -> dict:
         spm = cfg["slots"][body.scene]["spm"] + "$##$0"
         force = {"rank_layer": body.variant} if body.variant else None
-        rec: Recommendation = eng.recommend(
+        rec: Recommendation = eng.recommend_safe(
             Request(
                 user_id=body.user_id,
                 spm=spm,
@@ -345,3 +431,144 @@ def create_app(artifact: Path | str, config_path: str | None = None, engine: Eng
         return {"request_id": rec.request_id, "now": eng.clock.now(), "items": items, "trace": rec.trace}
 
     return app
+
+
+def app_from_env() -> FastAPI:
+    """uvicorn factory for multi-worker serving: RECSYS_ARTIFACT, RECSYS_CONFIG."""
+    return create_app(os.environ.get("RECSYS_ARTIFACT", "artifacts/engine.pkl"), os.environ.get("RECSYS_CONFIG"))
+
+
+# ------------------------------------------------------------------ config console
+def mount_admin(app: FastAPI, eng: Engine, cfg: dict, store: ConfigStore, watcher: ConfigWatcher) -> None:
+    import copy
+
+    from fastapi import Depends
+    from fastapi.responses import JSONResponse
+
+    token = cfg["admin"].get("token") or ""
+
+    def guard(http: HTTPRequest) -> None:
+        if token and http.headers.get("X-Admin-Token") != token:
+            raise HTTPException(401, "admin token required (X-Admin-Token)")
+
+    def draft_of(body: DraftRequest) -> dict | str:
+        if body.toml is not None:
+            return body.toml
+        if body.config is not None:
+            return body.config
+        raise HTTPException(422, "give `toml` or `config`")
+
+    def bad(e: ConfigError) -> JSONResponse:
+        return JSONResponse({"ok": False, "errors": e.errors}, status_code=422)
+
+    def items_of(rec: Recommendation, lang: str) -> list[dict]:
+        out = []
+        for n, it in enumerate(rec.items):
+            d = eng.catalog.describe(it["idx"], rec.market, lang)
+            d.update(rank=n + 1, score=it["score"], sources=it["sources"])
+            out.append(d)
+        return out
+
+    @app.get("/admin")
+    def admin_page() -> FileResponse:
+        return FileResponse(WEB / "admin.html")
+
+    @app.get("/admin/api/config", dependencies=[Depends(guard)])
+    def get_config() -> dict:
+        watcher.maybe_reload(force=True)
+        v = store.get()
+        return {
+            "version": v.summary() if v else None,
+            "toml": v.toml if v else "",
+            "config": hot_sections(eng.config),
+            "running_version": watcher.version,
+            "reload_error": watcher.last_error,
+            "catalog": {
+                "categories": eng.catalog.cat_names,
+                "brands": eng.catalog.brand_names,
+                "markets": list(eng.config["markets"]),
+            },
+            "registry": {
+                "recalls": {k: list(inspect.signature(fn).parameters)[4:] for k, fn in RECALLS.items()},
+                "filters": list(FILTERS),
+                "rankers": ["gbdt", "recall_score"],
+            },
+            "restart_sections": {k: _redact(eng.config.get(k)) for k in RESTART_SECTIONS},
+        }
+
+    @app.get("/admin/api/versions", dependencies=[Depends(guard)])
+    def versions() -> dict:
+        return {"versions": [v.summary() for v in store.versions()], "audit": store.audit(20)}
+
+    @app.get("/admin/api/versions/{vid}", dependencies=[Depends(guard)])
+    def version(vid: int) -> dict:
+        v = store.get(vid)
+        if v is None:
+            raise HTTPException(404, f"no version {vid}")
+        return {"version": v.summary(), "toml": v.toml, "config": v.config}
+
+    @app.post("/admin/api/validate", dependencies=[Depends(guard)], response_model=None)
+    def validate(body: DraftRequest) -> dict | JSONResponse:
+        try:
+            new, _, warnings = check(draft_of(body), eng.config, eng)
+        except ConfigError as e:
+            return bad(e)
+        return {"ok": True, "warnings": warnings, "diff": diff(hot_sections(eng.config), hot_sections(new))}
+
+    @app.post("/admin/api/preview", dependencies=[Depends(guard)], response_model=None)
+    def preview(body: PreviewRequest) -> dict | JSONResponse:
+        """Same request under the running config and the draft (nothing recorded)."""
+        try:
+            new, _, warnings = check(draft_of(body), eng.config, eng)
+        except ConfigError as e:
+            return bad(e)
+        if body.scene not in new["slots"]:
+            raise HTTPException(422, f"unknown scene {body.scene}")
+        draft = copy.copy(eng)
+        draft.config = {**new, **{k: eng.config[k] for k in RESTART_SECTIONS if k in eng.config}}
+        out: dict[str, Any] = {}
+        for name, en in (("current", eng), ("draft", draft)):
+            if body.scene not in en.config["slots"]:
+                out[name] = {"items": [], "trace": {"error": "scene not in this config"}}
+                continue
+            req = Request(
+                user_id=body.user_id,
+                spm=en.config["slots"][body.scene]["spm"] + "$##$0",
+                market=body.market,
+                size=body.size,
+                parent_id=body.parent_item_id,
+            )
+            rec = en.recommend(req, record=False)
+            out[name] = {"items": items_of(rec, body.lang), "trace": rec.trace}
+        cur, dr = {i["id"] for i in out["current"]["items"]}, {i["id"] for i in out["draft"]["items"]}
+        return {"ok": True, "warnings": warnings, **out, "overlap": len(cur & dr), "size": max(len(cur), len(dr))}
+
+    @app.post("/admin/api/publish", dependencies=[Depends(guard)], response_model=None)
+    def publish(body: DraftRequest) -> dict | JSONResponse:
+        try:
+            new, text, warnings = check(draft_of(body), eng.config, eng)
+        except ConfigError as e:
+            return bad(e)
+        changes = diff(hot_sections(eng.config), hot_sections(new))
+        if not changes:
+            return JSONResponse({"ok": False, "errors": ["no changes"]}, status_code=422)
+        vid = store.publish(text, hot_sections(new), body.comment or f"{len(changes)} change(s)", body.author)
+        watcher.maybe_reload(force=True)
+        return {"ok": True, "version": vid, "changes": changes, "warnings": warnings}
+
+    @app.post("/admin/api/rollback", dependencies=[Depends(guard)], response_model=None)
+    def rollback(body: RollbackRequest) -> dict | JSONResponse:
+        try:
+            store.activate(body.version, body.author)
+        except KeyError:
+            raise HTTPException(404, f"no version {body.version}") from None
+        watcher.maybe_reload(force=True)
+        if watcher.version != body.version:
+            return JSONResponse({"ok": False, "errors": [watcher.last_error or "reload failed"]}, status_code=500)
+        return {"ok": True, "version": body.version}
+
+
+def _redact(v: Any) -> Any:
+    if isinstance(v, dict):
+        return {k: ("***" if k in ("token", "url", "store") and x else _redact(x)) for k, x in v.items()}
+    return v

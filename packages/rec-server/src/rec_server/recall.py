@@ -128,6 +128,29 @@ def bought_together(m: Models, c: Catalog, r: RecallInput, k: int) -> Result:
     return _topk(s, r.avail, k)
 
 
+def repurchase(m: Models, c: Catalog, r: RecallInput, k: int, early: float = 0.7, late: float = 2.5) -> Result:
+    """Consumables the shopper is due to buy again: purchased items whose category has a
+    learned repurchase cycle and whose last purchase was `early`..`late` cycles ago. Scores
+    peak at exactly one cycle; the same item ranks above same-brand alternatives."""
+    cyc = m.repurchase_days
+    if not len(cyc) or not r.ctx.purchased:
+        return EMPTY
+    score = np.zeros(c.n)
+    for i, ts in r.ctx.purchased.items():
+        days = cyc[c.cat[i]]
+        if not np.isfinite(days):
+            continue
+        x = (r.ctx.now - ts) / DAY / days
+        if not early <= x <= late:
+            continue
+        s = 1.0 / (1.0 + abs(np.log(x)))
+        score[i] = max(score[i], s)
+        alts = m.brand_lists[r.ctx.market].get(int(c.brand[i]), np.zeros(0, int))
+        alts = alts[(c.cat[alts] == c.cat[i]) & r.avail[alts] & (alts != i)][:3]
+        score[alts] = np.maximum(score[alts], 0.5 * s)
+    return _topk(score, r.avail, k)
+
+
 RECALLS: dict[str, Callable[..., Result]] = {
     "hot": hot,
     "interest": interest,
@@ -140,6 +163,7 @@ RECALLS: dict[str, Callable[..., Result]] = {
     "parent_brand": parent_brand,
     "parent_category": parent_category,
     "bought_together": bought_together,
+    "repurchase": repurchase,
 }
 
 

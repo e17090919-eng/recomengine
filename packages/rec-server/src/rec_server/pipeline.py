@@ -11,11 +11,13 @@ from pathlib import Path
 
 import numpy as np
 
+from .bus import Bus, NullBus
 from .data import DAY, Catalog, Clock, ItemStats, Tables, UserStore
 from .engine import Engine
 from .features import build_features, build_user_ctx
 from .models import Models
 from .rank import train_ranker
+from .state import LiveState, make_live
 
 
 def build_samples(t: Tables, catalog: Catalog, config: dict, start_ts: float, end_ts: float):
@@ -58,7 +60,8 @@ def build_engine(
     ranker, metrics = train_ranker(X, y, g, valid)
     log(
         f"[pipeline] ranker ({metrics['backend']}): AUC={metrics['auc']:.4f} GAUC={metrics['gauc']:.4f} "
-        f"train={metrics['train_rows']} valid={metrics['valid_rows']}"
+        f"train={metrics['train_rows']} valid={metrics['valid_rows']} onnx={metrics.get('onnx')} "
+        f"serving={metrics.get('serving_backend')}"
     )
     users = UserStore.build(t, catalog, cutoff_ts)
     stats = ItemStats.build(t, catalog, cutoff_ts)
@@ -80,23 +83,27 @@ def build_engine(
 
 
 def save_engine(engine: Engine, path: Path) -> None:
+    """Pickle the snapshot. Live state and the bus are connections, never pickled
+    (see Engine/UserStore __getstate__)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    issued, engine.issued = engine.issued, {}
-    try:
-        with open(path, "wb") as f:
-            pickle.dump(engine, f, protocol=pickle.HIGHEST_PROTOCOL)
-    finally:
-        engine.issued = issued
+    with open(path, "wb") as f:
+        pickle.dump(engine, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def load_engine(path: Path, config: dict | None = None, live: bool = True) -> Engine:
-    from collections import defaultdict, deque
-
+def load_engine(
+    path: Path,
+    config: dict | None = None,
+    live: bool = True,
+    state: LiveState | None = None,
+    bus: Bus | None = None,
+) -> Engine:
+    """Load a snapshot and attach real-time state + bus (from config unless given)."""
     with open(path, "rb") as f:
         engine: Engine = pickle.load(f)
     if config is not None:
         Engine.validate_config(config)
         engine.config = config
     engine.clock = Clock(engine.clock.base_ts, live=live)
-    engine.issued = defaultdict(lambda: deque(maxlen=200))
+    engine.users.live = state if state is not None else make_live(engine.config)
+    engine.bus = bus if bus is not None else NullBus()
     return engine

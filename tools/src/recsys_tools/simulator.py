@@ -527,6 +527,8 @@ def simulate(
                         "item",
                     )
 
+    rows += _repurchases(np.random.default_rng(seed + 1), rows, n_days, item_cat, item_brand, avail, local_price)
+
     behaviors = pd.DataFrame(
         rows,
         columns=[
@@ -547,6 +549,42 @@ def simulate(
     return SimResult(
         dict(user=users, item=items, item_market=item_market, category=categories, behavior=behaviors), truth, meta
     )
+
+
+# consumables are bought again after roughly this many days (lognormal noise)
+REPURCHASE_DAYS = {"skincare": 21, "makeup": 25, "health": 18, "confectionery": 12, "liquor": 28}
+REPURCHASE_P = 0.4
+
+
+def _repurchases(rng, rows, n_days, item_cat, item_brand, avail, local_price) -> list[tuple]:
+    """Organic re-buys of consumables (same item, or same brand+category), outside any
+    recommendation request: the signal the `repurchase` recall channel learns from."""
+    cat_names = [c[0] for c in CATEGORIES]
+    end = START_TS + n_days * DAY
+    out: list[tuple] = []
+    for r in [r for r in rows if r[3] == "purchase"]:
+        _, uid, iid, _, t, _, m, _, _ = r
+        i = int(iid[1:])
+        cycle = REPURCHASE_DAYS.get(cat_names[item_cat[i]])
+        if cycle is None or rng.random() >= REPURCHASE_P:
+            continue
+        t2 = int(t + cycle * rng.lognormal(0, 0.25) * DAY)
+        if t2 >= end:
+            continue
+        j = i
+        if rng.random() < 0.35 or not avail[m][i]:
+            same = np.flatnonzero((item_cat == item_cat[i]) & (item_brand == item_brand[i]) & avail[m])
+            if len(same) == 0:
+                continue
+            j = int(rng.choice(same))
+        jid = f"g{j:05d}"
+        spm = "demo$##$order$##$rebuy$##$0"
+        out += [
+            ("0", uid, jid, "click", t2, spm, m, "", 0.0),
+            ("0", uid, jid, "add_cart", t2 + 20, spm, m, "", 0.0),
+            ("0", uid, jid, "purchase", t2 + 90, spm, m, "", float(local_price[m][j])),
+        ]
+    return out
 
 
 def _browse(rng, pool, item_cat, n_cat) -> np.ndarray:

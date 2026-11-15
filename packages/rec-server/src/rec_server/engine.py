@@ -4,24 +4,26 @@ from __future__ import annotations
 
 import base64
 import copy
+import inspect
 import json
+import logging
 import time
 import uuid
-from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
 from . import abtest
+from .bus import Bus, NullBus
 from .data import Catalog, Clock, ItemStats, UserStore
 from .features import build_features, build_user_ctx
 from .models import Models
 from .rank import Ranker
-from .recall import RECALLS, RecallInput, merge
-from .rules import FILTERS, RuleCtx, boost_new, disperse
+from .recall import RECALLS, RecallInput, _from_list, merge
+from .rules import FILTERS, RuleCtx, boost_new, disperse, pool_mask
 
-ISSUED_WINDOW = 30 * 60  # cross-request dedup window (s)
-ISSUED_CAP = 200
+log = logging.getLogger("recsys.engine")
 
 
 class SlotNotFound(Exception):
@@ -68,15 +70,87 @@ class Engine:
         self.models, self.ranker, self.clock = models, ranker, clock
         self.info = info or {}
         self.market_codes = {m: i for i, m in enumerate(sorted(config["markets"]))}
-        self.issued: dict[str, deque] = defaultdict(lambda: deque(maxlen=ISSUED_CAP))
+        self.bus: Bus = NullBus()
+        self._item_ver, self._item_sync_at = 0, 0.0
         self.validate_config(config)
+
+    def __getstate__(self) -> dict:
+        d = self.__dict__.copy()
+        d["bus"] = None
+        return d
+
+    def __setstate__(self, d: dict) -> None:
+        self.__dict__.update(d)
+        self.bus = NullBus()
+        self._item_ver, self._item_sync_at = 0, 0.0
+
+    # ------------------------------------------------------------- config hot reload
+    def reload_config(self, config: dict) -> None:
+        """Swap in a new (already schema-validated) config; restart-only sections are kept."""
+        from recsys_core.config import RESTART_SECTIONS
+
+        self.validate_config(config)
+        if set(config["markets"]) != set(self.config["markets"]):
+            raise ValueError("adding/removing markets needs a retrain + restart (ranker market codes)")
+        self.config = {**config, **{k: self.config[k] for k in RESTART_SECTIONS if k in self.config}}
+
+    def catalog_warnings(self, config: dict) -> list[str]:
+        """Names in item pools / compliance blocks that do not exist in the current catalog."""
+        cat, out = self.catalog, []
+        known = {"categories": set(cat.cat_names), "brands": set(cat.brand_names), "items": set(cat.id2idx)}
+        refs = []
+        for m, mc in config["markets"].items():
+            refs += [(f"markets.{m}.blocked_categories", "categories", mc.get("blocked_categories", []))]
+            refs += [(f"markets.{m}.blocked_items", "items", mc.get("blocked_items", []))]
+        for s, sc in config["slots"].items():
+            p = sc.get("pool") or {}
+            for key, kind in (
+                ("include_categories", "categories"),
+                ("exclude_categories", "categories"),
+                ("include_brands", "brands"),
+                ("exclude_brands", "brands"),
+                ("exclude_items", "items"),
+            ):
+                refs.append((f"slots.{s}.pool.{key}", kind, p.get(key, [])))
+        for where, kind, names in refs:
+            unknown = [n for n in names if n not in known[kind]]
+            if unknown:
+                out.append(f"{where}: unknown {kind} {unknown[:5]}")
+        return out
+
+    # ------------------------------------------------------------- item price/stock changes
+    def publish_item_changes(self, changes: list[tuple[str, str, float | None, int | None]]) -> None:
+        recv = time.time()
+        self.users.live.push_item_changes([(*c, recv) for c in changes])
+        self.sync_items(force=True)
+
+    def sync_items(self, force: bool = False, every: float = 0.5) -> int:
+        """Apply price/stock changes other workers received (shared log in live state).
+        Changes received before this snapshot was built are already in it."""
+        t = time.monotonic()
+        if not force and t - self._item_sync_at < every:
+            return 0
+        self._item_sync_at = t
+        self._item_ver, changes = self.users.live.item_changes_since(self._item_ver)
+        n = 0
+        for market, iid, price, stock, recv in changes:
+            if recv >= self.users.built_at:
+                n += self.catalog.update_market(iid, market, price, stock)
+        return n
 
     @staticmethod
     def validate_config(config: dict) -> None:
         """Names in config must exist in the recall / filter registries."""
         errs = []
         for name, slot in config["slots"].items():
-            errs += [f"slot {name}: unknown recall {r['name']!r}" for r in slot["recalls"] if r["name"] not in RECALLS]
+            for r in slot["recalls"]:
+                if r["name"] not in RECALLS:
+                    errs.append(f"slot {name}: unknown recall {r['name']!r}")
+                    continue
+                allowed = list(inspect.signature(RECALLS[r["name"]]).parameters)[4:]
+                bad = set(r.get("params") or {}) - set(allowed)
+                if bad:
+                    errs.append(f"slot {name}: recall {r['name']} has no params {sorted(bad)} (allowed: {allowed})")
             errs += [f"slot {name}: unknown filter {f!r}" for f in slot.get("filters", []) if f not in FILTERS]
         if errs:
             raise ValueError("; ".join(errs))
@@ -90,17 +164,21 @@ class Engine:
         raise SlotNotFound(spm)
 
     def record_issued(self, user_id: str, idxs: list[int], now: float) -> None:
-        dq = self.issued[user_id]
-        for i in idxs:
-            dq.append((now, i))
+        self.users.live.record_issued(user_id, [str(self.catalog.item_ids[i]) for i in idxs], now)
 
     def _issued_set(self, user_id: str, now: float) -> set[int]:
-        return {i for ts, i in self.issued.get(user_id, ()) if now - ts <= ISSUED_WINDOW}
+        ids = self.users.live.issued(user_id, now)
+        return {i for i in (self.catalog.idx(x) for x in ids) if i is not None}
 
     # ------------------------------------------------------------- main
     def recommend(self, req: Request, overrides: dict | None = None, record: bool = True) -> Recommendation:
-        t0 = time.perf_counter()
+        t_start = t0 = time.perf_counter()
         timings: dict[str, float] = {}
+        degraded: list[str] = []
+        srv = self.serving
+
+        def elapsed() -> float:
+            return (time.perf_counter() - t_start) * 1000
 
         def lap(name: str) -> None:
             nonlocal t0
@@ -109,6 +187,11 @@ class Engine:
             t0 = t1
 
         slot_name = self.route(req.spm)
+        try:
+            self.sync_items()
+        except Exception:
+            log.exception("item change sync failed")
+            degraded.append("item_sync")
         slot = copy.deepcopy(self.config["slots"][slot_name])
         assignments = abtest.assign(self.config.get("experiments", {}), req.user_id, slot_name, req.force_variants)
         for a in assignments:
@@ -141,12 +224,21 @@ class Engine:
             sources = {int(i): ["candidate"] for i in cand}
         else:
             rin = RecallInput(ctx=ctx, avail=avail, parent=parent, cart=cart)
-            results, weights = {}, {}
+            results: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+            weights: dict[str, float] = {}
             for rc in slot["recalls"]:
-                fn = RECALLS[rc["name"]]
-                results[rc["name"]] = fn(self.models, cat, rin, rc["quota"])
-                weights[rc["name"]] = rc.get("weight", 1.0)
-                trace["recall"][rc["name"]] = len(results[rc["name"]][0])
+                name = rc["name"]
+                if results and elapsed() > srv["recall_budget_ms"]:
+                    degraded.append(f"recall_budget:{name}")
+                    continue
+                try:
+                    results[name] = RECALLS[name](self.models, cat, rin, rc["quota"], **(rc.get("params") or {}))
+                except Exception:
+                    log.exception("recall %s failed", name)
+                    degraded.append(f"recall_error:{name}")
+                    continue
+                weights[name] = rc.get("weight", 1.0)
+                trace["recall"][name] = len(results[name][0])
             cand, base, sources = merge(results, weights)
             if len(cand) == 0:  # cold fallback
                 cand, base = RECALLS["hot"](self.models, cat, rin, 100)
@@ -166,6 +258,8 @@ class Engine:
             filter_spec=req.filter_spec,
             issued=self._issued_set(req.user_id, now) if record else set(),
             allowance_remaining=req.allowance_remaining,
+            repurchase_days=getattr(self.models, "repurchase_days", np.zeros(0)),
+            pool={k: v for k, v in (slot.get("pool") or {}).items() if v not in (None, [])},
         )
         for fname in slot.get("filters", []):
             if len(cand) == 0:
@@ -176,11 +270,19 @@ class Engine:
         lap("filter")
 
         # ---- rank
+        if len(cand) > srv["rank_max_candidates"]:  # merged recall is sorted by fused score
+            cand, base = cand[: srv["rank_max_candidates"]], base[: srv["rank_max_candidates"]]
+        score = base.astype(float)
         if slot.get("ranker") == "gbdt" and self.ranker is not None and len(cand):
-            X = build_features(ctx, cand, cat, self.stats, self.models, self.market_codes)
-            score = self.ranker.predict(X)
-        else:
-            score = base.astype(float)
+            if elapsed() > srv["timeout_ms"] * 0.7:
+                degraded.append("rank_budget")
+            else:
+                try:
+                    X = build_features(ctx, cand, cat, self.stats, self.models, self.market_codes)
+                    score = self.ranker.predict(X)
+                except Exception:
+                    log.exception("ranker failed")
+                    degraded.append("rank_error")
         lap("rank")
 
         # ---- re-rank
@@ -198,12 +300,81 @@ class Engine:
             dict(idx=int(i), id=str(cat.item_ids[i]), score=float(score_of[int(i)]), sources=sources.get(int(i), []))
             for i in final
         ]
-        if record:
-            self.record_issued(req.user_id, [int(i) for i in final], now)
         trace["returned"] = len(items)
         trace["timings_ms"] = timings
         trace["total_ms"] = round(sum(timings.values()), 2)
-        return Recommendation(rid, slot_name, ctx.market, items, trace)
+        trace["degraded"] = degraded
+        rec = Recommendation(rid, slot_name, ctx.market, items, trace)
+        if record:
+            self.record_issued(req.user_id, [int(i) for i in final], now)
+            self.log_request(req, rec, now)
+        return rec
+
+    # ------------------------------------------------------------- safety net
+    @property
+    def serving(self) -> dict:
+        return {
+            "timeout_ms": 150.0,
+            "recall_budget_ms": 60.0,
+            "rank_max_candidates": 500,
+            "fallback_size": 20,
+            **(self.config.get("serving") or {}),
+        }
+
+    def recommend_safe(self, req: Request, overrides: dict | None = None, record: bool = True) -> Recommendation:
+        """recommend(); on any unexpected error serve the market's hot list instead of failing."""
+        try:
+            return self.recommend(req, overrides, record)
+        except SlotNotFound:
+            raise
+        except Exception as e:
+            log.exception("recommend failed, serving fallback")
+            return self.fallback(req, f"error:{type(e).__name__}")
+
+    def fallback(self, req: Request, reason: str) -> Recommendation:
+        slot_name = self.route(req.spm)
+        prof = self.users.profiles.get(req.user_id)
+        market = req.market or (prof.market if prof else None) or self.config["app"]["default_market"]
+        now = self.clock.now()
+        mcfg = self.config["markets"].get(market, {})
+        avail = self.catalog.available(market, now) & pool_mask(self.catalog, market, mcfg, None)  # compliance
+        size = req.size or self.config["slots"][slot_name].get("size") or self.serving["fallback_size"]
+        ix, sc = _from_list(self.models.hot.get(market, np.zeros(0, int)), avail, size)
+        items = [
+            dict(idx=int(i), id=str(self.catalog.item_ids[i]), score=float(s), sources=["fallback_hot"])
+            for i, s in zip(ix, sc)
+        ]
+        trace: dict[str, Any] = {
+            "slot": slot_name,
+            "market": market,
+            "experiments": {},
+            "degraded": [reason],
+            "total_ms": 0.0,
+        }
+        trace["timings_ms"] = {}
+        rec = Recommendation(uuid.uuid4().hex[:16], slot_name, market, items, trace)
+        self.log_request(req, rec, now)
+        return rec
+
+    def log_request(self, req: Request, rec: Recommendation, now: float) -> None:
+        try:
+            self.bus.publish(
+                "rec_log",
+                [
+                    {
+                        "request_id": rec.request_id,
+                        "user_id": req.user_id,
+                        "ts": int(now),
+                        "slot": rec.slot,
+                        "market": rec.market,
+                        "variants": ",".join(f"{k}={v}" for k, v in rec.trace.get("experiments", {}).items()),
+                        "items": "|".join(it["id"] for it in rec.items),
+                        "degraded": ",".join(rec.trace.get("degraded", [])),
+                    }
+                ],
+            )
+        except Exception:
+            log.exception("request log publish failed")
 
 
 def trans_data(rec: Recommendation, item: dict) -> str:

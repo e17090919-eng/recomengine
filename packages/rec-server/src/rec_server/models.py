@@ -1,16 +1,16 @@
 """Offline-trained artifacts: Swing item-to-item similarity, item embeddings,
-and per-market hot / category / brand lists."""
+per-market hot / category / brand lists, and repurchase cycles of consumables."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 from scipy import sparse
 from scipy.sparse.linalg import svds
 
-from .data import EVENT_WEIGHTS, Catalog, ItemStats, Tables
+from .data import DAY, EVENT_WEIGHTS, Catalog, ItemStats, Tables
 
 
 def swing(
@@ -94,6 +94,31 @@ def item_embeddings(
     return H / np.maximum(np.linalg.norm(H, axis=1, keepdims=True), 1e-9)
 
 
+def repurchase_cycles(
+    t: Tables, catalog: Catalog, cutoff_ts: float, min_gap_days: float = 2.0, min_support: int = 20
+) -> np.ndarray:
+    """Typical days between two purchases of the same brand+category by the same shopper
+    (median of gaps >= `min_gap_days`, i.e. not the same trip/session). Categories with
+    fewer than `min_support` such gaps are treated as non-consumable (inf)."""
+    out = np.full(len(catalog.cat_names), np.inf)
+    b = t.behaviors[(t.behaviors["ts"] < cutoff_ts) & (t.behaviors["event_type"] == "purchase")]
+    if b.empty:
+        return out
+    ix = b["item_id"].map(catalog.id2idx)
+    ixa = ix.to_numpy(dtype=int)
+    df = pd.DataFrame(
+        {"u": b["user_id"].to_numpy(), "c": catalog.cat[ixa], "g": catalog.brand[ixa], "ts": b["ts"].to_numpy()}
+    )
+    df = df.sort_values(["u", "c", "g", "ts"], kind="stable")
+    gap = df.groupby(["u", "c", "g"])["ts"].diff() / DAY  # same shopper, same brand, same category
+    df = df.assign(gap=gap)
+    df = df[df["gap"] >= min_gap_days]
+    for c, g in df.groupby("c")["gap"]:
+        if len(g) >= min_support:
+            out[int(str(c))] = float(g.median())
+    return out
+
+
 @dataclass
 class Models:
     swing: sparse.csr_matrix  # click/cart co-engagement
@@ -102,6 +127,7 @@ class Models:
     hot: dict[str, np.ndarray]  # market -> item idx sorted by hotness
     cat_lists: dict[str, dict[int, np.ndarray]]  # market -> cat -> sorted idx
     brand_lists: dict[str, dict[int, np.ndarray]]
+    repurchase_days: np.ndarray = field(default_factory=lambda: np.zeros(0))  # per category; inf = not consumable
 
     @classmethod
     def train(cls, t: Tables, catalog: Catalog, stats: ItemStats, cutoff_ts: float) -> Models:
@@ -126,6 +152,7 @@ class Models:
             cat_lists[m] = {c: order[catalog.cat[order] == c] for c in range(len(catalog.cat_names))}
             brand_lists[m] = {g: order[catalog.brand[order] == g] for g in range(len(catalog.brand_names))}
         return cls(
+            repurchase_days=repurchase_cycles(t, catalog, cutoff_ts),
             swing=swing(UI),
             buy_swing=swing(UB, alpha=0.5),
             item_vec=item_embeddings(UI, catalog),
