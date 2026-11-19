@@ -90,13 +90,13 @@ rank_max_candidates = 500
 fallback_size = 20
 
 [state]
-backend = "memory"         # "redis" when running more than one worker / pod
+backend = "${RECSYS_STATE_BACKEND:-memory}"   # "redis" when running more than one worker / pod
 url = "${RECSYS_REDIS_URL:-redis://localhost:6379/0}"
 
 [ingest]
-bus = "lake"               # lake (single node) | kafka | none
+bus = "${RECSYS_INGEST_BUS:-lake}"   # lake (single node) | kafka | none
 lake_dir = "${RECSYS_INGEST_LAKE:-lake}"   # make demo writes to lake_demo/, not the training lake
-kafka_bootstrap = "localhost:9092"
+kafka_bootstrap = "${RECSYS_KAFKA:-localhost:9092}"
 flush_rows = 5000
 flush_seconds = 10
 

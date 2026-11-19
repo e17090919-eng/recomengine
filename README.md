@@ -9,7 +9,8 @@ Plan: [`../docs/ecommerce-recsys-plan.md`](../docs/ecommerce-recsys-plan.md) · 
 [`docs/data-contract.md`](docs/data-contract.md) · Tracking spec: [`docs/tracking-spec.md`](docs/tracking-spec.md) ·
 Customer alignment: [`docs/p0-alignment-checklist.md`](docs/p0-alignment-checklist.md) · Demo script:
 [`docs/demo-script.md`](docs/demo-script.md) · Python SDK:
-[`packages/sdk-python`](packages/sdk-python/README.md)
+[`packages/sdk-python`](packages/sdk-python/README.md) · Java SDK:
+[`packages/sdk-java`](packages/sdk-java/README.md)
 
 ## Quick start
 
@@ -21,6 +22,11 @@ make serve        # train on the lake, then API + demo UI on :8000, config conso
 make ab-sim       # online A/B simulation through the production path + daily report
 make demo         # demo storefront on :8100 driven by the engine (script: docs/demo-script.md)
 make help         # everything else
+
+# no Docker? install and run the same infra natively (~/opt/recsys-infra, no sudo):
+make infra-native-install && make infra-native-up && make infra-native-check
+make serve-infra  # engine on Redis + Kafka + Postgres config store
+make sdk-java-test && make sdk-java-it
 ```
 
 Optional: `uv sync --all-packages --extra lgb` uses LightGBM for the ranker (macOS: `brew install libomp`);
@@ -34,6 +40,7 @@ otherwise scikit-learn's HistGradientBoosting is used and exported to ONNX for s
 | `packages/rec-server` | `rec_server` | online engine: recall, features, GBDT ranker (+ ONNX), rules, A/B, degradation, live state (memory / Redis), ingest + bus (lake / Kafka), HTTP API, `/metrics`, demo UI, config console |
 | `packages/batch` | `recsys_batch` | batch jobs: offline baseline, T+1 daily report (attribution, funnel, A/B readout) |
 | `packages/sdk-python` | `recsys_client` | Python SDK (only needs httpx; Python ≥ 3.9) |
+| `packages/sdk-java` | `com.recsys.client` | Java SDK (Maven; Java ≥ 11, Jackson) |
 | `apps/demo-shop` | `demo_shop` | demo storefront: a pretend customer integrating via the public API + SDK |
 | `tools` | `recsys_tools` | `recsys` CLI, backfill, simulator, online A/B simulation, Kafka consumer, load test |
 | `configs/engine.toml` | | markets, slots (SPM → recall/rank/rules/item pool), experiments, serving budget, state, ingest, console |

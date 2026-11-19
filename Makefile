@@ -78,10 +78,38 @@ p1: p0 train ab-sim  ## P0 + train (ONNX export) + online A/B simulation
 infra-up:  ## start local infra (docker compose)
 	docker compose -f deploy/docker-compose.yml up -d
 
+INFRA_ENV = RECSYS_STATE_BACKEND=redis RECSYS_INGEST_BUS=kafka RECSYS_KAFKA=127.0.0.1:9092 \
+  RECSYS_CONFIG_STORE=postgresql://recsys:recsys@127.0.0.1:5432/recsys
+MVN = JAVA_HOME=$${RECSYS_INFRA:-$$HOME/opt/recsys-infra}/jdk/Contents/Home $${RECSYS_INFRA:-$$HOME/opt/recsys-infra}/maven/bin/mvn -B -q
+
+infra-native-install:  ## no Docker: install JDK, Maven, Redis, Postgres, Kafka, ClickHouse, Prometheus, Grafana under ~/opt/recsys-infra
+	./deploy/native/install.sh
+
+infra-native-up:  ## no Docker: start the natively installed infra (same ports as compose)
+	./deploy/native/up.sh
+
+infra-native-down:  ## no Docker: stop it (add WIPE=1 to delete its data)
+	./deploy/native/down.sh $(if $(WIPE),--wipe,)
+
+infra-native-check:  ## no Docker: smoke-check it
+	./deploy/native/check.sh
+
+serve-infra:  ## engine on the full stack: Redis state, Kafka bus, Postgres config store (WORKERS=4)
+	$(INFRA_ENV) $(UV) run recsys serve --workers $(or $(SERVE_WORKERS),4) --log-level warning
+
+consume:  ## Kafka -> lake consumer (runs alongside serve-infra)
+	RECSYS_INGEST_BUS=kafka RECSYS_KAFKA=127.0.0.1:9092 $(UV) run recsys consume
+
+sdk-java-test:  ## Java SDK unit tests (JDK/Maven from infra-native-install)
+	cd packages/sdk-java && $(MVN) test
+
+sdk-java-it:  ## Java SDK end-to-end against a running engine on :8000
+	cd packages/sdk-java && $(MVN) test -Drecsys.it.url=http://127.0.0.1:8000
+
 infra-down:  ## stop local infra
 	docker compose -f deploy/docker-compose.yml down
 
 infra-check:  ## verify local infra endpoints respond
 	./deploy/check-infra.sh
 
-.PHONY: help setup lint fmt typecheck test check docs raw backfill quality baseline p0 train serve serve-multi ab-sim report loadtest demo p1 infra-up infra-down infra-check
+.PHONY: help setup lint fmt typecheck test check docs raw backfill quality baseline p0 train serve serve-multi ab-sim report loadtest demo p1 infra-up infra-down infra-check infra-native-install infra-native-up infra-native-down infra-native-check serve-infra consume sdk-java-test sdk-java-it

@@ -10,3 +10,7 @@
 | `helm/rec-server` | Deployment + Service + HPA + ConfigMap (engine.toml); artifacts from a PVC |
 
 Requires Docker (Docker Desktop / OrbStack / Colima). `make infra-up && make infra-check`.
+
+Without Docker: `native/` installs the same components under `~/opt/recsys-infra` (no sudo) and runs them on the
+same ports — `make infra-native-install`, `make infra-native-up`, `make infra-native-check`, `make infra-native-down`
+(`WIPE=1` deletes data). MinIO no longer ships macOS binaries, so S3 there is moto (in-memory stand-in).

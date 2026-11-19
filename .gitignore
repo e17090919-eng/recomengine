@@ -13,3 +13,4 @@ __pycache__/
 !/reports/.gitkeep
 .DS_Store
 /lake_demo/
+/packages/sdk-java/target/

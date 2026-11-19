@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from recsys_core.config import EngineConfig, find_root, load_config
+from recsys_core.config import EngineConfig, expand_env, find_root, load_config
 from recsys_core.lake import Lake
 from recsys_core.quality import run_checks
 from recsys_core.schema import conform, to_markdown, valid_spm
@@ -19,7 +19,7 @@ ROOT = find_root(Path(__file__).parent)
 
 def raw_cfg() -> dict:
     with open(ROOT / "configs" / "engine.toml", "rb") as f:
-        return tomllib.load(f)
+        return expand_env(tomllib.load(f))  # as load_config does: ${ENV:-default} -> value
 
 
 def test_repo_config_is_valid():
